@@ -2,12 +2,15 @@
 
 import json
 import math
+import os
 import shutil
 import sys
 from pathlib import Path
 
 CODE_DIR = Path(__file__).resolve().parent.parent
 IS_FROZEN = bool(getattr(sys, 'frozen', False))
+IS_BRIEFCASE = bool(os.environ.get('WORLDBOX_BRIEFCASE'))
+IS_PACKAGED = IS_FROZEN or IS_BRIEFCASE
 
 
 def _copy_missing(src, dst):
@@ -24,10 +27,12 @@ def _copy_missing(src, dst):
         pass
 
 
-if IS_FROZEN:
-    # PyInstaller：_MEIPASS 是只读的解压目录，exe 同目录才是可写数据目录
+if IS_PACKAGED:
+    # PyInstaller：_MEIPASS 是只读的解压目录，exe 同目录才是可写数据目录；
+    # Briefcase AppImage：由入口设置 WORLDBOX_DATA_DIR 指向用户目录
     BUNDLE_DIR = Path(getattr(sys, '_MEIPASS', CODE_DIR)).resolve()
-    DATA_DIR = Path(sys.executable).resolve().parent
+    DATA_DIR = Path(os.environ.get('WORLDBOX_DATA_DIR')
+                    or Path(sys.executable).resolve().parent)
     for _rel in ('config', 'assets/fonts'):
         _copy_missing(BUNDLE_DIR / _rel, DATA_DIR / _rel)
     ROOT_DIR = DATA_DIR
