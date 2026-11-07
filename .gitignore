@@ -4,6 +4,9 @@ world_save.json
 # 配置文件
 config/setting.json
 
+# 资源文件
+assets/worldbox
+
 # IDE文件夹
 .idea/
 .vscode/
