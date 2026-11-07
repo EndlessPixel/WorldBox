@@ -1,11 +1,13 @@
-"""X11 物理输入轮询。
+"""跨平台物理输入轮询。
 
-本机 Ursina/Panda3D 的键盘事件层会丢失 key-up（held_keys 只增不减），
-space/shift/escape 也没有事件；鼠标按键事件同样不可靠。这里直接读
-X11 的物理状态，非 X11 平台回退到 held_keys / mouse.left/right。
+Ursina/Panda3D 的键盘事件层会丢失 key-up（held_keys 只增不减），
+space/shift/escape 也没有事件；鼠标按键事件同样不可靠。
+Linux 用 XQueryKeymap / XQueryPointer，Windows 用 GetAsyncKeyState /
+GetCursorPos，其它平台回退到 held_keys / mouse.left/right。
 """
 
 import ctypes
+import sys
 
 from ursina import application
 
@@ -41,9 +43,34 @@ class PhysicalKeys:
     BUTTON2_MASK = 1 << 9      # 鼠标中键
     BUTTON3_MASK = 1 << 10     # 鼠标右键
 
+    # Windows 虚拟键码（键名与 X11 分支输出的别名一致）
+    VK_CODES = {c: 0x41 + i for i, c in enumerate('abcdefghijklmnopqrstuvwxyz')}
+    VK_CODES.update({str(i): 0x30 + i for i in range(10)})
+    VK_CODES.update({f'f{i}': 0x6F + i for i in range(1, 13)})
+    VK_CODES.update({
+        'space': 0x20, 'escape': 0x1b, 'tab': 0x09, 'enter': 0x0d,
+        'backspace': 0x08, 'delete': 0x2e,
+        'up': 0x26, 'down': 0x28, 'left': 0x25, 'right': 0x27,
+        'home': 0x24, 'end': 0x23, 'page_up': 0x21, 'page_down': 0x22,
+        'shift': 0x10, 'ctrl': 0x11, 'alt': 0x12, 'super': 0x5b,
+        'minus': 0xbd, 'equal': 0xbb, 'bracket_left': 0xdb,
+        'bracket_right': 0xdd, 'semicolon': 0xba, 'quote': 0xde,
+        'comma': 0xbc, 'period': 0xbe, 'slash': 0xbf,
+        'backslash': 0xdc, 'grave': 0xc0,
+    })
+    VK_LBUTTON, VK_RBUTTON, VK_MBUTTON = 0x01, 0x02, 0x04
+
     def __init__(self):
         self._x11 = None
+        self._win32 = None
+        self._wintypes = None
         self._root = 0
+        self._window_id = 0
+        self._hwnd = 0
+        self._keycodes = {}
+        if sys.platform == 'win32':
+            self._init_win32()
+            return
         x11 = None
         for name in ('libX11.so.6', 'libX11.so'):
             try:
@@ -88,8 +115,38 @@ class PhysicalKeys:
             for name, keysym in self.KEYSYMS.items()
         }
 
+    # ---------- Windows ----------
+    def _init_win32(self):
+        try:
+            from ctypes import wintypes
+            user32 = ctypes.WinDLL('user32', use_last_error=True)
+            user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+            user32.GetAsyncKeyState.restype = ctypes.c_short
+            user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+            user32.GetCursorPos.restype = wintypes.BOOL
+            user32.ScreenToClient.argtypes = [
+                wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+            user32.ScreenToClient.restype = wintypes.BOOL
+            self._win32 = user32
+            self._wintypes = wintypes
+        except Exception as e:
+            print(f'[输入] Win32 初始化失败，回退 Ursina 事件层: {e}')
+            self._win32 = None
+            return
+        self._resolve_hwnd()
+
+    def _resolve_hwnd(self):
+        try:
+            self._hwnd = application.base.win.get_window_handle().get_int_handle()
+        except Exception:
+            self._hwnd = 0
+
     def snapshot(self):
-        """返回当前按下的键名集合；X11 不可用时返回 None 以启用回退。"""
+        """返回当前按下的键名集合；无物理输入后端时返回 None 以启用回退。"""
+        if self._win32 is not None:
+            user32 = self._win32
+            return {name for name, vk in self.VK_CODES.items()
+                    if user32.GetAsyncKeyState(vk) & 0x8000}
         if self._x11 is None or not self._x11.XQueryKeymap(self._display, self._keymap_ptr):
             return None
         pressed = set()
@@ -101,7 +158,12 @@ class PhysicalKeys:
         return pressed
 
     def mouse_buttons(self):
-        """返回 (左键, 中键, 右键) 的按住状态；X11 不可用时返回 None。"""
+        """返回 (左键, 中键, 右键) 的按住状态；无物理后端时返回 None。"""
+        if self._win32 is not None:
+            user32 = self._win32
+            return (bool(user32.GetAsyncKeyState(self.VK_LBUTTON) & 0x8000),
+                    bool(user32.GetAsyncKeyState(self.VK_MBUTTON) & 0x8000),
+                    bool(user32.GetAsyncKeyState(self.VK_RBUTTON) & 0x8000))
         if self._x11 is None or not self._root:
             return None
         root_return = ctypes.c_ulong()
@@ -126,6 +188,23 @@ class PhysicalKeys:
 
     def pointer_ui_position(self):
         """返回鼠标在 UI 坐标里的位置（x ∈ ±aspect/2，y ∈ ±0.5）；不可用时返回 None。"""
+        if self._win32 is not None:
+            if not self._hwnd:
+                self._resolve_hwnd()
+            if not self._hwnd:
+                return None
+            point = self._wintypes.POINT()
+            if not self._win32.GetCursorPos(ctypes.byref(point)):
+                return None
+            if not self._win32.ScreenToClient(
+                    self._wintypes.HWND(self._hwnd), ctypes.byref(point)):
+                return None
+            window = application.base.win
+            width, height = window.get_x_size(), window.get_y_size()
+            if width <= 0 or height <= 0:
+                return None
+            return ((point.x / width - 0.5) * (width / height),
+                    0.5 - point.y / height)
         if self._x11 is None or not self._window_id:
             return None
         root_return = ctypes.c_ulong()

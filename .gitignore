@@ -21,6 +21,11 @@ __pycache__/
 venv/
 *.egg-info/
 
+# PyInstaller 构建产物（CI 里生成，不入库）
+build/
+dist/
+*.spec
+
 # 下载器与原子写入的临时文件
 *.part
 *.tmp

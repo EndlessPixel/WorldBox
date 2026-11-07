@@ -2,9 +2,39 @@
 
 import json
 import math
+import shutil
+import sys
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+CODE_DIR = Path(__file__).resolve().parent.parent
+IS_FROZEN = bool(getattr(sys, 'frozen', False))
+
+
+def _copy_missing(src, dst):
+    """只复制目标端缺失的文件，避免覆盖玩家的配置/存档。"""
+    try:
+        if src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if not dst.exists():
+                shutil.copy2(src, dst)
+        elif src.is_dir():
+            for child in src.iterdir():
+                _copy_missing(child, dst / child.name)
+    except OSError:
+        pass
+
+
+if IS_FROZEN:
+    # PyInstaller：_MEIPASS 是只读的解压目录，exe 同目录才是可写数据目录
+    BUNDLE_DIR = Path(getattr(sys, '_MEIPASS', CODE_DIR)).resolve()
+    DATA_DIR = Path(sys.executable).resolve().parent
+    for _rel in ('config', 'assets/fonts'):
+        _copy_missing(BUNDLE_DIR / _rel, DATA_DIR / _rel)
+    ROOT_DIR = DATA_DIR
+else:
+    BUNDLE_DIR = None
+    ROOT_DIR = CODE_DIR
+
 CONFIG_DIR = ROOT_DIR / 'config'
 
 # 配置文件优先放 config/ 目录，同时兼容放在项目根目录的旧布局
@@ -19,10 +49,15 @@ if not BLOCKS_FILE.exists() and (ROOT_DIR / 'blocks.json').exists():
     BLOCKS_FILE = ROOT_DIR / 'blocks.json'
 SAVE_FILE = ROOT_DIR / 'world_save.json'
 
-# 中文字体：放进 assets/ 才能被 Ursina 的字体查找器找到
+# 中文字体：放进 assets/ 才能被 Ursina 的字体查找器找到。
+# 支持 ttc/otf/ttf：CI 打包时下载的是 OFL 授权的 Noto Sans SC OTF。
 CJK_FONT = None
-if (ROOT_DIR / 'assets' / 'fonts' / 'NotoSansCJK-Regular.ttc').exists():
-    CJK_FONT = 'fonts/NotoSansCJK-Regular.ttc'
+_fonts_dir = ROOT_DIR / 'assets' / 'fonts'
+for _font_name in ('NotoSansCJK-Regular.ttc', 'NotoSansCJK-Regular.otf',
+                   'NotoSansSC-Regular.otf', 'NotoSansCJK-Regular.ttf'):
+    if (_fonts_dir / _font_name).exists():
+        CJK_FONT = f'fonts/{_font_name}'
+        break
 
 DEFAULT_SETTINGS = {
     'auto_jump': True,          # 是否自动跳上台阶

@@ -18,7 +18,8 @@ _cdn = None
 def _downloader():
     global _cdn
     if _cdn is None:
-        if str(config.ROOT_DIR) not in sys.path:
+        # 冻结模式下 cdn_download 已打进 exe，由 PyInstaller 的导入器提供
+        if not config.IS_FROZEN and str(config.ROOT_DIR) not in sys.path:
             sys.path.insert(0, str(config.ROOT_DIR))
         import cdn_download
         _cdn = cdn_download

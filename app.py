@@ -10,9 +10,14 @@
 安装：pip install ursina
 """
 
-from ursina import Ursina, color, window
+from ursina import Ursina, application, color, window
 
+from world import config
 from world.game import Game
+
+# 打包成 exe 后 sys.argv[0] 不一定指向数据目录；显式指向可写的根目录，
+# Ursina 才能递归找到 assets/fonts 里的中文字体
+application.asset_folder = config.ROOT_DIR
 
 app = Ursina()
 window.title = 'WorldBox'

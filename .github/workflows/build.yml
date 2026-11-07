@@ -1,0 +1,46 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: 安装运行与打包依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt
+
+      - name: 下载中文字体与 OFL 许可
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path assets/fonts | Out-Null
+          Invoke-WebRequest `
+            -Uri "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf" `
+            -OutFile "assets/fonts/NotoSansSC-Regular.otf"
+          Invoke-WebRequest `
+            -Uri "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/LICENSE" `
+            -OutFile "assets/fonts/OFL.txt"
+
+      - name: 打包 exe
+        run: python build_exe.py
+
+      - name: 上传 Windows 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorldBox-Windows
+          path: dist/WorldBox/
+          if-no-files-found: error
