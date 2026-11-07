@@ -21,10 +21,15 @@ __pycache__/
 venv/
 *.egg-info/
 
-# PyInstaller 构建产物（CI 里生成，不入库）
+# 打包产物（CI 里生成，不入库）
 build/
 dist/
+linux/
 *.spec
+briefcase_src/
+resources/
+RELEASE_NOTES.md
+smoke_result.txt
 
 # 下载器与原子写入的临时文件
 *.part

@@ -13,13 +13,20 @@ PyInstaller 不支持跨平台交叉编译，Windows exe 必须在 Windows 机�
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 # PyInstaller 的 --add-data 分隔符：Windows 是 ';'，POSIX 是 ':'
 SEP = os.pathsep
+
+
+def version():
+    with (ROOT / 'pyproject.toml').open('rb') as f:
+        return tomllib.load(f)['tool']['briefcase']['version']
 
 
 def main():
@@ -67,7 +74,10 @@ def main():
     result = subprocess.call(cmd, cwd=ROOT)
     if result == 0:
         print('\n[OK] Build complete: dist/WorldBox/WorldBox.exe')
-        print('     Ship the whole dist/WorldBox/ folder (fonts, config and saves live there).')
+        archive = ROOT / 'dist' / f'WorldBox-{version()}-windows-x86_64.zip'
+        shutil.make_archive(str(archive.with_suffix('')), 'zip',
+                            root_dir=ROOT / 'dist', base_dir='WorldBox')
+        print('[OK] Release archive:', archive)
     return result
 
 

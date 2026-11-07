@@ -1,0 +1,34 @@
+[project]
+name = "worldbox"
+version = "0.1.0"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
+[tool.briefcase]
+project_name = "WorldBox"
+bundle = "com.endlesspixel"
+version = "0.1.0"
+url = "https://github.com/EndlessPixel/WorldBox"
+author = "EndlessPixel"
+author_email = "EndlessPixel@users.noreply.github.com"
+
+[tool.briefcase.app.worldbox]
+formal_name = "WorldBox"
+description = "A voxel sandbox built with Ursina"
+long_description = "A small editable voxel world with resource packs, a fullscreen map and configurable controls."
+sources = [
+    "briefcase_src/worldbox",
+    "briefcase_src/app.py",
+    "briefcase_src/cdn_download.py",
+    "briefcase_src/world",
+    "briefcase_src/config",
+    "briefcase_src/assets",
+]
+icon = "resources/icon"
+requires = [
+    "ursina==8.3.0",
+    "pillow>=10.0.0",
+]
+
+[tool.briefcase.app.worldbox.linux.appimage]
+revision = 1
