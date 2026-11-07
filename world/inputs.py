@@ -11,20 +11,30 @@ from ursina import application
 
 
 class PhysicalKeys:
-    KEYSYMS = {
-        'w': 0x77, 'a': 0x61, 's': 0x73, 'd': 0x64,
-        'c': 0x63, 'e': 0x65,
-        'space': 0x20, 'escape': 0xff1b, 'f5': 0xffc2,
+    # 按键绑定需要覆盖常见键；XKeysymToKeycode 会把 keysym 映射到当前布局的 keycode
+    KEYSYMS = {chr(code): code for code in range(ord('a'), ord('z') + 1)}
+    KEYSYMS.update({str(i): 0x30 + i for i in range(10)})
+    KEYSYMS.update({
+        'space': 0x20, 'escape': 0xff1b, 'tab': 0xff09,
+        'enter': 0xff0d, 'kp_enter': 0xff8d,
+        'backspace': 0xff08, 'delete': 0xffff,
+        'up': 0xff52, 'down': 0xff54, 'left': 0xff51, 'right': 0xff53,
+        'home': 0xff50, 'end': 0xff57, 'page_up': 0xff55, 'page_down': 0xff56,
         'shift_l': 0xffe1, 'shift_r': 0xffe2,
         'lcontrol': 0xffe3, 'rcontrol': 0xffe4,
-        'up': 0xff52, 'down': 0xff54, 'left': 0xff51, 'right': 0xff53,
-        'enter': 0xff0d, 'kp_enter': 0xff8d,
-        '1': 0x31, '2': 0x32, '3': 0x33, '4': 0x34, '5': 0x35,
-        '6': 0x36, '7': 0x37, '8': 0x38, '9': 0x39,
-    }
+        'alt_l': 0xffe9, 'alt_r': 0xffea,
+        'super_l': 0xffeb, 'super_r': 0xffec,
+        'minus': 0x2d, 'equal': 0x3d, 'bracket_left': 0x5b,
+        'bracket_right': 0x5d, 'semicolon': 0x3b, 'quote': 0x27,
+        'comma': 0x2c, 'period': 0x2e, 'slash': 0x2f,
+        'backslash': 0x5c, 'grave': 0x60,
+    })
+    KEYSYMS.update({f'f{i}': 0xffbd + i for i in range(1, 13)})
     ALIASES = {
         'shift_l': 'shift', 'shift_r': 'shift',
         'lcontrol': 'ctrl', 'rcontrol': 'ctrl',
+        'alt_l': 'alt', 'alt_r': 'alt',
+        'super_l': 'super', 'super_r': 'super',
         'kp_enter': 'enter',
     }
     BUTTON1_MASK = 1 << 8      # 鼠标左键

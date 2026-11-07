@@ -10,6 +10,7 @@ CONFIG_DIR = ROOT_DIR / 'config'
 # 配置文件优先放 config/ 目录，同时兼容放在项目根目录的旧布局
 SETTINGS_FILE = CONFIG_DIR / 'setting.json'
 BLOCKS_FILE = CONFIG_DIR / 'blocks.json'
+KEYS_FILE = CONFIG_DIR / 'keys.json'
 # 资源包定义目录（默认世界不下载纹理，用程序生成的噪声材质）
 RESOURCE_PACK_DIR = CONFIG_DIR / 'resource_packs'
 if not SETTINGS_FILE.exists() and (ROOT_DIR / 'setting.json').exists():

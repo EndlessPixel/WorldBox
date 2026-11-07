@@ -1,9 +1,9 @@
 """游戏 UI：HUD、准心、快捷栏、背包、暂停菜单、设置面板与选中指示器。"""
 
-from ursina import Button, Entity, Mesh, Text, camera, color, destroy, mouse
+from ursina import Button, Entity, Mesh, Text, camera, color, destroy, mouse, window
 
-from . import config, i18n, packs
-from .blocks import BLOCK_IDS, BLOCKS
+from . import config, i18n, keybinds, packs
+from .blocks import BLOCK_IDS, BLOCK_NAMES, BLOCKS
 from .storage import _save_number
 
 if config.CJK_FONT:
@@ -11,6 +11,8 @@ if config.CJK_FONT:
 
 # 菜单/设置按钮统一用较亮的颜色，默认按钮色太暗看不清
 BUTTON_COLOR = color.rgba(.58, .62, .68, 1)
+# 半透明遮罩在 z=-10，页面文字/按钮必须更靠前（UI 相机朝 +Z，z 越小越靠前）
+UI_FRONT_Z = -20
 
 SETTING_KEYS = (
     'language', 'resource_pack', 'auto_jump', 'auto_jump_height',
@@ -36,6 +38,11 @@ class GameUI:
         self.menu_state = {'open': False, 'index': 0}
         self.settings_open = False
         self.settings_index = 0
+        self.packs_open = False
+        self.packs_index = 0
+        self.keys_open = False
+        self.keys_index = 0
+        self.rebind_action = None
 
         # 快捷栏 / 背包（创造模式：方块无限，只选择类型）
         self.hotbar = [BLOCK_IDS[i] if i < len(BLOCK_IDS) else None
@@ -60,16 +67,27 @@ class GameUI:
         self._build_crosshair()
         self._build_hotbar()
         self._build_inventory()
+        self._build_tooltip()
         self._build_menu()
         self._build_settings()
+        self._build_packs()
+        self._build_keybinds()
         self.selector = Entity(model='wireframe_cube', color=color.white,
                                scale=1.004, enabled=False)
 
         self.refresh_hotbar()
         self.refresh_inventory()
         self.refresh_settings()
+        self.refresh_packs()
+        self.refresh_keybinds()
 
     # ---------- 构建 ----------
+    @staticmethod
+    def _bring_to_front(root):
+        """把页面里的文字/按钮（除第一块背景遮罩）放到遮罩前面。"""
+        for child in list(root.children)[1:]:
+            child.z = UI_FRONT_Z
+
     def _build_hud(self):
         self.hud = Text(text='', position=(-0.86, 0.47), origin=(-0.5, 0.5),
                         scale=0.75, background=True, z=-2)
@@ -93,7 +111,7 @@ class GameUI:
                         scale=(config.SLOT_SIZE, config.SLOT_SIZE), x=x, y=-.44, z=-1)
             items = self._make_slot_items(bg)
             Text(parent=bg, text=str(i + 1), origin=(-.5, -.5),
-                 position=(-.44, -.44), scale=.45, z=.2)
+                 position=(-.44, -.44), scale=.45, z=-.2)
             self.hotbar_ui.append((bg, items))
 
     def _build_inventory(self):
@@ -101,10 +119,10 @@ class GameUI:
         Entity(parent=self.inventory_root, model='quad', color=color.black66,
                scale=(3, 2), z=-10)
         self.inventory_title = Text(parent=self.inventory_root, text=i18n.t('inventory.title'),
-                                    origin=(0, 0), y=.34, scale=1.5, z=-.02)
+                                    origin=(0, 0), y=.34, scale=1.5, z=UI_FRONT_Z)
         self.inventory_hint = Text(parent=self.inventory_root, text=i18n.t('inventory.hint'),
                                    origin=(0, 0), y=-.35, scale=.6,
-                                   color=color.gray, z=-.02)
+                                   color=color.gray, z=UI_FRONT_Z)
 
         self.inventory_ui = []
         step = config.SLOT_SIZE + config.SLOT_GAP
@@ -120,6 +138,21 @@ class GameUI:
 
         self.held_icons = self._make_held_icons()
 
+    def _build_tooltip(self):
+        """悬停物品信息提示：固定尺寸的深色底板 + 三行文字。"""
+        self.tooltip_width = .42
+        self.tooltip_height = .105
+        # 必须比背包全屏遮罩（z=-10）更靠前，否则会被深度测试挡住
+        self.tooltip_root = Entity(parent=camera.ui, enabled=False, z=-20)
+        # UI 相机朝 +Z，z 越小越靠前：底板在后、文字在前
+        Entity(parent=self.tooltip_root, model='quad',
+               color=color.rgba(.05, .06, .08, .96),
+               scale=(self.tooltip_width, self.tooltip_height),
+               origin=(-.5, .5), z=.02)
+        self.tooltip_text = Text(parent=self.tooltip_root, text='',
+                                 origin=(-.5, .5), scale=.72,
+                                 color=color.white, z=-.01)
+
     def _build_menu(self):
         self.menu_root = Entity(parent=camera.ui, enabled=False)
         Entity(parent=self.menu_root, model='quad', color=color.black66,
@@ -132,16 +165,19 @@ class GameUI:
                               origin=(0, 0), y=-.44, scale=.5, color=color.gray)
 
         self.menu_labels = (i18n.t('menu.resume'), i18n.t('menu.settings'),
+                            i18n.t('menu.packs'), i18n.t('menu.keybinds'),
                             i18n.t('menu.save'), i18n.t('menu.save_quit'))
         self.menu_buttons = [
             Button(parent=self.menu_root, text=label, scale=(.5, .065),
                    color=BUTTON_COLOR,
-                   y=.10 - i * .1, on_click=action)
+                   y=.13 - i * .085, on_click=action)
             for i, (label, action) in enumerate(zip(
                 self.menu_labels,
-                (self.close_menu, self.open_settings, self._menu_save, self._menu_quit)))
+                (self.close_menu, self.open_settings, self.open_packs,
+                 self.open_keybinds, self._menu_save, self._menu_quit)))
         ]
         self.refresh_menu_highlight()
+        self._bring_to_front(self.menu_root)
 
     def _build_settings(self):
         self.settings_root = Entity(parent=camera.ui, enabled=False)
@@ -168,6 +204,67 @@ class GameUI:
         self.settings_back = Button(parent=self.settings_root, text=i18n.t('settings.back'),
                                     scale=(.5, .065), color=BUTTON_COLOR,
                                     y=-.42, on_click=self.close_settings)
+        self._bring_to_front(self.settings_root)
+
+    def _build_packs(self):
+        """资源包配置页：列表、状态、应用/下载。"""
+        self.packs_root = Entity(parent=camera.ui, enabled=False)
+        Entity(parent=self.packs_root, model='quad', color=color.black66,
+               scale=(3, 2), z=-10)
+        self.packs_title = Text(parent=self.packs_root, text=i18n.t('packs.title'),
+                                origin=(0, 0), y=.42, scale=1.5)
+        self.packs_rows = []
+        for i in range(8):
+            y = .28 - i * .07
+            label = Text(parent=self.packs_root, text='', origin=(-.5, 0),
+                         x=-.7, y=y, scale=.75)
+            value = Text(parent=self.packs_root, text='', origin=(0, 0),
+                         x=.52, y=y, scale=.65)
+            self.packs_rows.append((label, value))
+        self.packs_status = Text(parent=self.packs_root, text='', origin=(0, 0),
+                                 y=-.27, scale=.65, color=color.azure)
+        self.packs_hint = Text(parent=self.packs_root, text=i18n.t('packs.hint'),
+                               origin=(0, 0), y=-.33, scale=.5, color=color.gray)
+        Button(parent=self.packs_root, text=i18n.t('packs.apply'),
+               scale=(.28, .065), color=BUTTON_COLOR, x=-.35, y=-.42,
+               on_click=self.apply_pack_selection)
+        Button(parent=self.packs_root, text=i18n.t('packs.download'),
+               scale=(.28, .065), color=BUTTON_COLOR, x=0, y=-.42,
+               on_click=self.download_selected_pack)
+        self.packs_back = Button(parent=self.packs_root, text=i18n.t('packs.back'),
+                                 scale=(.28, .065), color=BUTTON_COLOR,
+                                 x=.35, y=-.42, on_click=self.close_packs)
+        self._bring_to_front(self.packs_root)
+
+    def _build_keybinds(self):
+        """按键绑定页：动作列表 + 重绑定/恢复默认。"""
+        self.keys_root = Entity(parent=camera.ui, enabled=False)
+        Entity(parent=self.keys_root, model='quad', color=color.black66,
+               scale=(3, 2), z=-10)
+        self.keys_title = Text(parent=self.keys_root, text=i18n.t('keybinds.title'),
+                               origin=(0, 0), y=.42, scale=1.5)
+        self.keys_rows = []
+        for i, action in enumerate(keybinds.DEFAULT_BINDINGS):
+            y = .30 - i * .045
+            label = Text(parent=self.keys_root, text='', origin=(-.5, 0),
+                         x=-.7, y=y, scale=.7)
+            value = Text(parent=self.keys_root, text='', origin=(0, 0),
+                         x=.5, y=y, scale=.7)
+            self.keys_rows.append((action, label, value))
+        self.keys_status = Text(parent=self.keys_root, text='', origin=(0, 0),
+                                y=-.27, scale=.65, color=color.azure)
+        self.keys_hint = Text(parent=self.keys_root, text=i18n.t('keybinds.hint'),
+                              origin=(0, 0), y=-.33, scale=.5, color=color.gray)
+        Button(parent=self.keys_root, text=i18n.t('keybinds.rebind'),
+               scale=(.28, .065), color=BUTTON_COLOR, x=-.35, y=-.42,
+               on_click=self.start_rebind)
+        Button(parent=self.keys_root, text=i18n.t('keybinds.reset'),
+               scale=(.28, .065), color=BUTTON_COLOR, x=0, y=-.42,
+               on_click=self.reset_keybinds)
+        self.keys_back = Button(parent=self.keys_root, text=i18n.t('keybinds.back'),
+                                scale=(.28, .065), color=BUTTON_COLOR,
+                                x=.35, y=-.42, on_click=self.close_keybinds)
+        self._bring_to_front(self.keys_root)
 
     # ---------- 刷新 ----------
     @staticmethod
@@ -185,7 +282,7 @@ class GameUI:
                 icon = Entity(
                     parent=bg, model=self._clone_mesh(mesh),
                     texture=self.materials.texture,
-                    scale=(.85, .85, .85), z=.1, enabled=False)
+                    scale=(.85, .85, .85), z=-.1, enabled=False)
                 icon.set_two_sided(True)   # 顶/左面绕序相反，避免被背面剔除
                 items[block_id] = icon
         return items
@@ -200,7 +297,7 @@ class GameUI:
                     texture=self.materials.texture,
                     scale=(config.SLOT_SIZE * .85, config.SLOT_SIZE * .85,
                            config.SLOT_SIZE * .85),
-                    enabled=False, z=1)
+                    enabled=False, z=-18)
                 icon.set_two_sided(True)
                 icons[block_id] = icon
         return icons
@@ -253,6 +350,103 @@ class GameUI:
             highlighted = (i == self.settings_index)
             label.color = color.azure if highlighted else color.white
             value.color = label.color
+
+    # ---------- 资源包配置页 ----------
+    @staticmethod
+    def pack_options():
+        """[(id, 显示名)]；'' 表示默认世界（噪声材质）。"""
+        return ([('', i18n.pack_name(packs.DEFAULT_PACK_ID))]
+                + [(pid, i18n.pack_name(pid))
+                   for pid, _ in packs.available_packs() if pid])
+
+    @staticmethod
+    def pack_status(pack_id):
+        if not pack_id:
+            return i18n.t('packs.builtin')
+        folder = config.ROOT_DIR / 'assets' / pack_id / 'blocks'
+        count = len(tuple(folder.glob('*.png'))) if folder.is_dir() else 0
+        return (i18n.t('packs.ready').format(count=count)
+                if count else i18n.t('packs.missing'))
+
+    def refresh_packs(self):
+        options = self.pack_options()
+        self.packs_index = min(self.packs_index, max(0, len(options) - 1))
+        active = config.SETTINGS.get('resource_pack') or ''
+        for i, (label, value) in enumerate(self.packs_rows):
+            if i < len(options):
+                pack_id, name = options[i]
+                label.text = f'> {name} <' if i == self.packs_index else f'  {name}  '
+                label.enabled = True
+                value.enabled = True
+                marker = i18n.t('packs.active') if pack_id == active else ''
+                value.text = f'{self.pack_status(pack_id)}  {marker}'.strip()
+            else:
+                label.enabled = False
+                value.enabled = False
+            label.color = color.azure if i == self.packs_index else color.white
+            value.color = label.color
+
+    def apply_pack_selection(self):
+        options = self.pack_options()
+        if not options:
+            return
+        pack_id = options[self.packs_index][0]
+        config.apply_settings({'resource_pack': pack_id})
+        self.packs_status.text = i18n.t('packs.applied')
+        self.refresh_packs()
+
+    def download_selected_pack(self):
+        options = self.pack_options()
+        if not options:
+            return
+        pack_id = options[self.packs_index][0]
+        if not pack_id:
+            self.packs_status.text = i18n.t('packs.ready').format(count=0)
+            return
+        ok = packs.ensure_pack(pack_id)
+        self.packs_status.text = i18n.t('packs.downloaded' if ok else 'packs.failed')
+        self.refresh_packs()
+
+    # ---------- 按键绑定页 ----------
+    def refresh_keybinds(self):
+        actions = list(keybinds.DEFAULT_BINDINGS)
+        self.keys_index %= len(actions)
+        for i, (action, label, value) in enumerate(self.keys_rows):
+            name = i18n.t(f'key.{action}')
+            label.text = f'> {name} <' if i == self.keys_index else f'  {name}  '
+            value.text = (i18n.t('keybinds.press') if action == self.rebind_action
+                          else keybinds.display(keybinds.BINDINGS[action]))
+            tint = color.azure if i == self.keys_index else color.white
+            label.color = tint
+            value.color = tint
+
+    def start_rebind(self):
+        self.rebind_action = list(keybinds.DEFAULT_BINDINGS)[self.keys_index]
+        self.keys_status.text = i18n.t('keybinds.press')
+        self.refresh_keybinds()
+
+    def finish_rebind(self, key):
+        if not self.rebind_action:
+            return
+        action = self.rebind_action
+        self.rebind_action = None
+        if keybinds.set_binding(action, key):
+            self.keys_status.text = i18n.t('keybinds.done').format(
+                key=keybinds.display(key))
+        else:
+            self.keys_status.text = i18n.t('keybinds.failed')
+        self.refresh_keybinds()
+
+    def cancel_rebind(self):
+        self.rebind_action = None
+        self.keys_status.text = i18n.t('keybinds.cancel')
+        self.refresh_keybinds()
+
+    def reset_keybinds(self):
+        keybinds.reset()
+        self.rebind_action = None
+        self.keys_status.text = i18n.t('keybinds.reset_done')
+        self.refresh_keybinds()
 
     def setting_display(self, key):
         value = config.SETTINGS.get(key)
@@ -308,11 +502,24 @@ class GameUI:
         self.menu_title.text = i18n.t('menu.paused')
         self.menu_hint.text = i18n.t('menu.hint')
         self.menu_labels = (i18n.t('menu.resume'), i18n.t('menu.settings'),
+                            i18n.t('menu.packs'), i18n.t('menu.keybinds'),
                             i18n.t('menu.save'), i18n.t('menu.save_quit'))
         for button, label in zip(self.menu_buttons, self.menu_labels):
             button.text = label
         self.refresh_menu_highlight()
         self.menu_status.text = ''
+
+        self.packs_title.text = i18n.t('packs.title')
+        self.packs_hint.text = i18n.t('packs.hint')
+        self.packs_back.text = i18n.t('packs.back')
+        self.packs_status.text = ''
+        self.refresh_packs()
+
+        self.keys_title.text = i18n.t('keybinds.title')
+        self.keys_hint.text = i18n.t('keybinds.hint')
+        self.keys_back.text = i18n.t('keybinds.back')
+        self.keys_status.text = ''
+        self.refresh_keybinds()
 
         self.inventory_title.text = i18n.t('inventory.title')
         self.inventory_hint.text = i18n.t('inventory.hint')
@@ -338,6 +545,56 @@ class GameUI:
             return row * cols + col
         return None
 
+    def hovered_slot(self, point):
+        """返回鼠标悬停的 ('inventory'|'hotbar', 索引)；没命中返回 None。"""
+        if point is None:
+            return None
+        px, py = point
+        inv_idx = self.slot_index_at(px, py, config.INVENTORY_COLS,
+                                     config.INVENTORY_ROWS, .12)
+        if inv_idx is not None:
+            return ('inventory', inv_idx)
+        hot_idx = self.slot_index_at(px, py, config.HOTBAR_SLOTS, 1, -.44)
+        if hot_idx is not None:
+            return ('hotbar', hot_idx)
+        return None
+
+    @staticmethod
+    def item_info(block_id):
+        """物品悬浮信息：名称 / ID / 颜色。"""
+        if block_id is None:
+            return ''
+        name = i18n.block_name(block_id, BLOCK_NAMES.get(block_id, str(block_id)))
+        r, g, b = BLOCKS.get(block_id, {}).get('color', (0, 0, 0))
+        return f'{name}\n{block_id}\n{i18n.t("tooltip.color")} {r},{g},{b}'
+
+    def update_tooltip(self, point):
+        """背包打开时按鼠标位置刷新悬浮提示。"""
+        if not self.inventory_open or point is None:
+            self.hide_tooltip()
+            return
+        slot = self.hovered_slot(point)
+        items = (self.inventory if slot and slot[0] == 'inventory' else self.hotbar)
+        block_id = items[slot[1]] if slot else None
+        if block_id is None and self.held_item is not None:
+            block_id = self.held_item
+        if block_id is None:
+            self.hide_tooltip()
+            return
+        text = self.item_info(block_id)
+        if self.tooltip_text.text != text:
+            self.tooltip_text.text = text
+        half_w = window.aspect_ratio / 2
+        px = max(-half_w + .01,
+                 min(half_w - self.tooltip_width - .01, point[0] + .032))
+        py = max(-.5 + self.tooltip_height + .01,
+                 min(.5 - .01, point[1] - .032))
+        self.tooltip_root.position = (px, py, -20)
+        self.tooltip_root.enabled = True
+
+    def hide_tooltip(self):
+        self.tooltip_root.enabled = False
+
     # ---------- 开关 ----------
     def open_inventory(self):
         self.inventory_open = True
@@ -356,6 +613,7 @@ class GameUI:
                 icon.enabled = False
         self.inventory_open = False
         self.inventory_root.enabled = False
+        self.hide_tooltip()
         self.refresh_inventory()
         mouse.locked = True
 
@@ -364,6 +622,11 @@ class GameUI:
             self.close_inventory()
         self.settings_open = False
         self.settings_root.enabled = False
+        self.packs_open = False
+        self.packs_root.enabled = False
+        self.keys_open = False
+        self.keys_root.enabled = False
+        self.rebind_action = None
         self.menu_state['open'] = True
         self.menu_state['index'] = 0
         self.menu_status.text = ''
@@ -374,6 +637,11 @@ class GameUI:
     def close_menu(self):
         self.settings_open = False
         self.settings_root.enabled = False
+        self.packs_open = False
+        self.packs_root.enabled = False
+        self.keys_open = False
+        self.keys_root.enabled = False
+        self.rebind_action = None
         self.menu_state['open'] = False
         self.menu_root.enabled = False
         mouse.locked = True
@@ -393,6 +661,42 @@ class GameUI:
         self.refresh_menu_highlight()
         mouse.locked = False
 
+    def open_packs(self):
+        self.packs_open = True
+        self.packs_root.enabled = True
+        self.settings_root.enabled = False
+        self.menu_root.enabled = False
+        self.settings_open = False
+        self.packs_status.text = ''
+        self.refresh_packs()
+        mouse.locked = False
+
+    def close_packs(self):
+        self.packs_open = False
+        self.packs_root.enabled = False
+        self.menu_root.enabled = True
+        self.refresh_menu_highlight()
+        mouse.locked = False
+
+    def open_keybinds(self):
+        self.keys_open = True
+        self.keys_root.enabled = True
+        self.packs_root.enabled = False
+        self.menu_root.enabled = False
+        self.packs_open = False
+        self.rebind_action = None
+        self.keys_status.text = ''
+        self.refresh_keybinds()
+        mouse.locked = False
+
+    def close_keybinds(self):
+        self.keys_open = False
+        self.keys_root.enabled = False
+        self.menu_root.enabled = True
+        self.rebind_action = None
+        self.refresh_menu_highlight()
+        mouse.locked = False
+
     def _menu_save(self):
         saved = bool(self.on_save and self.on_save())
         self.menu_status.text = i18n.t('notice.saved' if saved else 'notice.save_failed')
@@ -401,35 +705,39 @@ class GameUI:
         if self.on_quit:
             self.on_quit()
 
-    # ---------- 背包鼠标拖拽 ----------
-    def handle_inventory_click(self, point, left_click):
-        if left_click and point is not None:
-            px, py = point
-            inv_idx = self.slot_index_at(px, py, config.INVENTORY_COLS,
-                                         config.INVENTORY_ROWS, .12)
-            hot_idx = self.slot_index_at(px, py, config.HOTBAR_SLOTS, 1, -.44)
-            if inv_idx is not None:
-                item = self.inventory[inv_idx]
+    # ---------- 背包鼠标拖拽 / 替换 ----------
+    def handle_inventory_click(self, point, left_click, right_click=False):
+        slot = self.hovered_slot(point)
+        if slot and (left_click or right_click):
+            which, idx = slot
+            items = self.inventory if which == 'inventory' else self.hotbar
+            item = items[idx]
+            if left_click:
                 if self.held_item is None:
                     if item is not None:
                         self.held_item = item
-                        self.inventory[inv_idx] = None
+                        items[idx] = None
                 else:
-                    self.inventory[inv_idx] = self.held_item
+                    items[idx] = self.held_item
                     self.held_item = item
+                if which == 'hotbar':
+                    self.selected_slot = idx
+            else:
+                # 右键：空手时复制该格物品；手上有物品时替换该格（手上保留，可连续替换）
+                if self.held_item is None:
+                    if item is not None:
+                        self.held_item = item
+                else:
+                    items[idx] = self.held_item
+                    if which == 'hotbar':
+                        self.selected_slot = idx
+            if which == 'inventory':
                 self.refresh_inventory()
-            elif hot_idx is not None:
-                item = self.hotbar[hot_idx]
-                if self.held_item is not None:
-                    self.hotbar[hot_idx] = self.held_item
-                    self.held_item = item
-                    self.selected_slot = hot_idx
-                else:
-                    self.selected_slot = hot_idx
+            else:
                 self.refresh_hotbar()
 
         # 手上的方块跟随鼠标
         for block_id, icon in self.held_icons.items():
             icon.enabled = (block_id == self.held_item and point is not None)
             if icon.enabled:
-                icon.position = (point[0], point[1], -3)
+                icon.position = (point[0], point[1], -18)

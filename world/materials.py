@@ -30,6 +30,11 @@ SURFACE_FILES = {
         'side': 'stone.png',
         'bottom': 'stone.png',
     },
+    'worldbox:cobblestone.block': {
+        'top': 'cobblestone.png',
+        'side': 'cobblestone.png',
+        'bottom': 'cobblestone.png',
+    },
     'worldbox:bedrock.block': {
         'top': 'bedrock.png',
         'side': 'bedrock.png',
@@ -65,7 +70,9 @@ class BlockMaterials:
 
     # ---------- 纹理加载 ----------
     def _load_tile(self, block_id, face):
-        filename = SURFACE_FILES.get(block_id, {}).get(face)
+        # 显式映射优先；未收录的自定义方块按 ID 后缀找同名 png（三面共用）
+        filename = (SURFACE_FILES.get(block_id, {}).get(face)
+                    or f'{block_id.split(":")[-1].split(".")[0]}.png')
         if filename:
             path = self.texture_dir / filename
             if path.exists():

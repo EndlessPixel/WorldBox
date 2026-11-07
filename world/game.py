@@ -5,8 +5,9 @@ import math
 
 from ursina import Sky, application, camera, color, held_keys, mouse, time, window
 
-from . import blocks, config, i18n, packs, storage
+from . import blocks, config, i18n, keybinds, packs, storage
 from .inputs import PhysicalKeys
+from .mapview import WorldMap
 from .materials import BlockMaterials
 from .player import Player
 from .ui import GameUI
@@ -27,6 +28,7 @@ class Game:
         self.ui = GameUI(self.save_data, self.world.materials,
                          on_save=self.save, on_quit=self.quit)
         self.keyboard = PhysicalKeys()
+        self.mapview = WorldMap(self.world, self.player)
         self.sky = Sky()
 
         self.day_time = config.START_DAY_TIME
@@ -37,6 +39,7 @@ class Game:
         self.hud_timer = 0.0
         self.hud_frames = 0
         self.prev_keys = set()
+        self.prev_raw_keys = set()
         self.prev_left = False
         self.prev_middle = False
         self.prev_right = False
@@ -114,6 +117,7 @@ class Game:
             self._language = i18n.get_language()
             self.notice = i18n.t('notice.help')
             self.notice_timer = 3.0
+            self.mapview.retranslate()
 
         # --- 资源包切换：下载纹理并热重载材质 ---
         active_pack = config.SETTINGS.get('resource_pack') or ''
@@ -121,24 +125,22 @@ class Game:
             self._apply_resource_pack(active_pack)
 
         # --- 物理按键状态（X11）；非 X11 平台回退到 Ursina 事件层 ---
-        keys = self.keyboard.snapshot()
-        if keys is None:
-            keys = {k for k in ('w', 'a', 's', 'd', 'space', 'escape', 'f5', 'c', 'e',
-                                '1', '2', '3', '4', '5', '6', '7', '8', '9') if held_keys[k]}
-            if held_keys['left shift'] or held_keys['right shift'] or held_keys['shift']:
-                keys.add('shift')
-            if held_keys['left control'] or held_keys['right control'] or held_keys['control']:
-                keys.add('ctrl')
-            if held_keys['up arrow']:
-                keys.add('up')
-            if held_keys['down arrow']:
-                keys.add('down')
-            if held_keys['left arrow']:
-                keys.add('left')
-            if held_keys['right arrow']:
-                keys.add('right')
-            if held_keys['enter']:
-                keys.add('enter')
+        raw_keys = self.keyboard.snapshot()
+        if raw_keys is None:
+            raw_keys = {k for k in keybinds.VALID_KEYS if held_keys[k]}
+            if held_keys['left shift'] or held_keys['right shift']:
+                raw_keys.add('shift')
+            if held_keys['left control'] or held_keys['right control']:
+                raw_keys.add('ctrl')
+            for ursina_name, name in (('up arrow', 'up'), ('down arrow', 'down'),
+                                      ('left arrow', 'left'), ('right arrow', 'right'),
+                                      ('space', 'space'), ('escape', 'escape')):
+                if held_keys[ursina_name]:
+                    raw_keys.add(name)
+        # 自定义按键绑定：物理键名 -> 游戏内部键名
+        raw_just = raw_keys - self.prev_raw_keys
+        self.prev_raw_keys = raw_keys.copy()
+        keys = keybinds.canonicalize(raw_keys)
         just_pressed = keys - self.prev_keys
         self.prev_keys = keys.copy()
 
@@ -154,9 +156,22 @@ class Game:
         right_click = right_down and not self.prev_right
         self.prev_left, self.prev_middle, self.prev_right = left_down, middle_down, right_down
 
-        # --- ESC：菜单 / 背包 / 打开菜单 ---
-        if 'escape' in just_pressed:
-            if self.ui.settings_open:
+        # --- M 全屏地图 / ESC 逐层返回 ---
+        if 'm' in just_pressed and self.mapview.is_open:
+            self.mapview.close()
+        elif self.mapview.is_open and 'escape' in just_pressed:
+            self.mapview.close()
+        elif ('m' in just_pressed and not self.ui.menu_state['open']
+              and not self.ui.inventory_open):
+            self.mapview.toggle()
+        elif 'escape' in just_pressed:
+            if self.ui.rebind_action:
+                self.ui.cancel_rebind()
+            elif self.ui.keys_open:
+                self.ui.close_keybinds()
+            elif self.ui.packs_open:
+                self.ui.close_packs()
+            elif self.ui.settings_open:
                 self.ui.close_settings()
             elif self.ui.menu_state['open']:
                 self.ui.close_menu()
@@ -165,8 +180,9 @@ class Game:
             else:
                 self.ui.open_menu()
 
-        # --- E：背包开关（菜单打开时不响应） ---
-        if 'e' in just_pressed and not self.ui.menu_state['open']:
+        # --- E：背包开关（菜单/地图打开时不响应） ---
+        if ('e' in just_pressed and not self.ui.menu_state['open']
+                and not self.mapview.is_open):
             if self.ui.inventory_open:
                 self.ui.close_inventory()
             else:
@@ -183,9 +199,42 @@ class Game:
             self.autosave_timer = 0.0
             self.save()
 
-        # --- 菜单 / 设置：暂停游戏，方向键选择、左右调整 ---
+        # --- 菜单 / 设置 / 资源包 / 按键绑定：暂停游戏 ---
         if self.ui.menu_state['open']:
-            if self.ui.settings_open:
+            if self.ui.rebind_action:
+                # 捕获任意新按下的物理键；ESC 取消
+                for key in sorted(raw_just):
+                    if key == 'escape':
+                        self.ui.cancel_rebind()
+                    else:
+                        self.ui.finish_rebind(key)
+                    break
+            elif self.ui.keys_open:
+                actions = list(keybinds.DEFAULT_BINDINGS)
+                if 'up' in just_pressed:
+                    self.ui.keys_index = (self.ui.keys_index - 1) % len(actions)
+                    self.ui.refresh_keybinds()
+                if 'down' in just_pressed:
+                    self.ui.keys_index = (self.ui.keys_index + 1) % len(actions)
+                    self.ui.refresh_keybinds()
+                if 'enter' in just_pressed:
+                    self.ui.start_rebind()
+                if 'r' in raw_just:
+                    self.ui.reset_keybinds()
+            elif self.ui.packs_open:
+                options = self.ui.pack_options()
+                if options:
+                    if 'up' in just_pressed:
+                        self.ui.packs_index = (self.ui.packs_index - 1) % len(options)
+                        self.ui.refresh_packs()
+                    if 'down' in just_pressed:
+                        self.ui.packs_index = (self.ui.packs_index + 1) % len(options)
+                        self.ui.refresh_packs()
+                    if 'enter' in just_pressed:
+                        self.ui.apply_pack_selection()
+                    if 'r' in raw_just:
+                        self.ui.download_selected_pack()
+            elif self.ui.settings_open:
                 if 'up' in just_pressed:
                     self.ui.settings_index = (
                         self.ui.settings_index - 1) % len(self.ui.settings_rows)
@@ -215,6 +264,18 @@ class Game:
             keys = set()
             just_pressed = set()
 
+        # --- 全屏地图打开：冻结移动与交互，刷新玩家标记 ---
+        if self.mapview.is_open:
+            self.ui.hide_tooltip()
+            self.ui.hud.enabled = False
+            keys = set()
+            just_pressed = set()
+            self.mapview.update_marker()
+        else:
+            self.ui.hud.enabled = True
+            if not self.ui.inventory_open:
+                self.ui.hide_tooltip()
+
         # --- 背包打开：暂停移动，方向键选择、回车放入快捷栏 ---
         if self.ui.inventory_open:
             moved = False
@@ -235,7 +296,8 @@ class Game:
             if moved:
                 self.ui.refresh_inventory()
             if 'enter' in just_pressed:
-                block_id = self.ui.inventory[self.ui.inv_selected]
+                # 手上有物品时优先用它替换当前快捷栏格，否则取高亮的背包格
+                block_id = self.ui.held_item or self.ui.inventory[self.ui.inv_selected]
                 if block_id is not None:
                     self.ui.hotbar[self.ui.selected_slot] = block_id
                     self.ui.refresh_hotbar()
@@ -248,8 +310,8 @@ class Game:
             point = self.keyboard.pointer_ui_position()
             if point is None:
                 point = (mouse.x, mouse.y)
-            self.ui.handle_inventory_click(point, left_click)
-
+            self.ui.handle_inventory_click(point, left_click, right_click)
+            self.ui.update_tooltip(point)
             keys = set()
             just_pressed = set()
 
@@ -276,7 +338,8 @@ class Game:
             self.player.notice = None
 
         # --- 准星射线 / 选中框 / 挖掘 / 放置 ---
-        active = not self.ui.menu_state['open'] and not self.ui.inventory_open
+        active = (not self.ui.menu_state['open'] and not self.ui.inventory_open
+                  and not self.mapview.is_open)
         hit = (self.world.raycast(camera.world_position, camera.forward,
                                   config.REACH_DISTANCE) if active else None)
 
@@ -318,8 +381,9 @@ class Game:
 
         if self.ui.crosshair.enabled != active:
             self.ui.crosshair.enabled = active
-        if self.ui.hotbar_root.enabled == self.ui.menu_state['open']:
-            self.ui.hotbar_root.enabled = not self.ui.menu_state['open']
+        show_hotbar = not self.ui.menu_state['open'] and not self.mapview.is_open
+        if self.ui.hotbar_root.enabled != show_hotbar:
+            self.ui.hotbar_root.enabled = show_hotbar
 
         # --- 区域化视距剔除 ---
         view_sq = config.VIEW_DISTANCE * config.VIEW_DISTANCE
