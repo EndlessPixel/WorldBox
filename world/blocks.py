@@ -7,10 +7,11 @@ from . import config
 DEFAULT_BLOCK_ID = 'worldbox:grass.block'
 
 DEFAULT_BLOCKS = (
-    {'id': 'worldbox:grass.block',  'name': 'Grass',  'color': (92, 172, 78)  },
-    {'id': 'worldbox:dirt.block',   'name': 'Dirt',   'color': (134, 96, 67)  },
-    {'id': 'worldbox:stone.block',  'name': 'Stone',  'color': (128, 128, 128)},
-    {"id": 'worldbox:bedrock.block','name': 'Bedrock','color': [90, 90, 90]   }
+    {'id': 'worldbox:grass.block',      'name': 'Grass',      'color': (92, 172, 78)  },
+    {'id': 'worldbox:dirt.block',       'name': 'Dirt',       'color': (134, 96, 67)  },
+    {'id': 'worldbox:stone.block',      'name': 'Stone',      'color': (128, 128, 128)},
+    {'id': 'worldbox:cobblestone.block','name': 'Cobblestone','color': [100, 100, 100]},
+    {"id": 'worldbox:bedrock.block',    'name': 'Bedrock',    'color': [90, 90, 90]   }
 )
 
 
