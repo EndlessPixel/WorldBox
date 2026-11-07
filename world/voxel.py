@@ -190,10 +190,22 @@ class VoxelWorld:
                 normal = (0, 0, -step_z)
         return None
 
-    def ground_height_at(self, x, z):
-        """玩家所在列最高的方块顶面；该列被挖空时返回世界底限，让玩家继续下落。"""
+    def ground_height_at(self, x, z, feet_y=None):
+        """玩家所在列的支撑面高度。
+
+        传 feet_y 时只返回不超过脚部 +0.55m 的最高方块顶面，
+        这样站在悬空方块（如 2 格高的洞顶）下面时不会被吸附到洞顶上；
+        不传时保持旧行为（整列最高方块顶面），供出生点/传送使用。
+        """
         ix, iz = math.floor(x), math.floor(z)
-        for y in range(config.MAX_BLOCK_Y - 1, config.MIN_BLOCK_Y - 1, -1):
-            if (ix, y, iz) in self.world_blocks:
+        if feet_y is None:
+            for y in range(config.MAX_BLOCK_Y - 1, config.MIN_BLOCK_Y - 1, -1):
+                if (ix, y, iz) in self.world_blocks:
+                    return y + 1
+            return config.FALL_LIMIT_Y
+        tolerance = 0.55
+        top = min(config.MAX_BLOCK_Y - 1, math.floor(feet_y + tolerance))
+        for y in range(top, config.MIN_BLOCK_Y - 1, -1):
+            if (ix, y, iz) in self.world_blocks and y + 1 <= feet_y + tolerance:
                 return y + 1
         return config.FALL_LIMIT_Y

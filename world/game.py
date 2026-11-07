@@ -81,6 +81,18 @@ class Game:
             return
         dt = min(raw_dt, 0.05)
 
+        # --- 窗口最小化时不要继续锁定/抢占鼠标指针 ---
+        panda_window = application.base.win if application.base else None
+        if panda_window is not None:
+            minimized = bool(panda_window.getProperties().getMinimized())
+            if minimized and mouse.locked:
+                mouse.locked = False
+            elif (not minimized and not mouse.locked
+                  and not self.ui.menu_state['open']
+                  and not self.ui.inventory_open
+                  and not self.ui.settings_open):
+                mouse.locked = True
+
         # --- 语言切换后刷新常驻提示 ---
         if i18n.get_language() != self._language:
             self._language = i18n.get_language()
@@ -265,7 +277,8 @@ class Game:
                         self.ui.hotbar[self.ui.selected_slot] = picked
                     self.ui.refresh_hotbar()
             if left_click:
-                if self.world.world_blocks.get((hx, hy, hz)) == 'worldbox:bedrock.block':
+                # 只有世界最底层的基岩不可破坏；玩家自己放置的基岩可以挖掉
+                if hy == config.MIN_BLOCK_Y:
                     self.notice, self.notice_timer = i18n.t('notice.bedrock'), 1.5
                 elif self.world.remove_block(hx, hy, hz):
                     self.world.world_edits[(hx, hy, hz)] = None

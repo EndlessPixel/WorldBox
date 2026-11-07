@@ -94,15 +94,19 @@ class Player:
                          min(config.WORLD_SIZE - config.PLAYER_RADIUS,
                              self.pos.z + move.z * speed * dt))
 
-            # 台阶检测：1 格台阶自动跳上去，更高的方块直接挡住（不瞬移）
-            step_up = self.world.ground_height_at(next_x, next_z) - self.pos.y
-            if step_up <= 0.01:
+            # 台阶/阻挡检测：脚部或膝盖格被方块挡住就无法前进；
+            # 1 格台阶（脚部格被挡但膝盖格空着）在自动跳跃开启时真实起跳跨过去
+            fx, fz = math.floor(next_x), math.floor(next_z)
+            feet_cell = math.floor(self.pos.y + 0.001)
+            foot_solid = (fx, feet_cell, fz) in self.world.world_blocks
+            knee_solid = (fx, feet_cell + 1, fz) in self.world.world_blocks
+            if not foot_solid and not knee_solid:
                 self.pos.x, self.pos.z = next_x, next_z
-            elif (self.grounded and step_up <= config.AUTO_JUMP_HEIGHT + 0.01
-                  and config.AUTO_JUMP):
+            elif (self.grounded and not knee_solid
+                  and config.AUTO_JUMP and config.AUTO_JUMP_HEIGHT >= 1.0):
                 self.velocity_y = max(
                     config.JUMP_SPEED,
-                    math.sqrt(2 * config.GRAVITY * (step_up + 0.25)))
+                    math.sqrt(2 * config.GRAVITY * 1.25))
                 self.grounded = False
                 self.pos.x, self.pos.z = next_x, next_z
 
@@ -112,8 +116,8 @@ class Player:
         self.pos.z = max(config.PLAYER_RADIUS,
                          min(config.WORLD_SIZE - config.PLAYER_RADIUS, self.pos.z))
 
-        # --- 重力与方块支撑 ---
-        ground_y = self.world.ground_height_at(self.pos.x, self.pos.z)
+        # --- 重力与方块支撑（只认脚部附近的支撑面，钻洞时不会被洞顶吸上去） ---
+        ground_y = self.world.ground_height_at(self.pos.x, self.pos.z, self.pos.y)
         self.velocity_y -= config.GRAVITY * dt
         self.pos.y += self.velocity_y * dt
         if self.pos.y <= ground_y:

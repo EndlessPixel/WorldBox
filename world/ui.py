@@ -9,6 +9,9 @@ from .storage import _save_number
 if config.CJK_FONT:
     Text.default_font = config.CJK_FONT
 
+# 菜单/设置按钮统一用较亮的颜色，默认按钮色太暗看不清
+BUTTON_COLOR = color.rgba(.58, .62, .68, 1)
+
 SETTING_KEYS = (
     'language', 'auto_jump', 'auto_jump_height',
     'view_distance', 'fov', 'view_bob', 'brightness',
@@ -149,6 +152,7 @@ class GameUI:
                             i18n.t('menu.save'), i18n.t('menu.save_quit'))
         self.menu_buttons = [
             Button(parent=self.menu_root, text=label, scale=(.5, .065),
+                   color=BUTTON_COLOR,
                    y=.10 - i * .1, on_click=action)
             for i, (label, action) in enumerate(zip(
                 self.menu_labels,
@@ -179,7 +183,8 @@ class GameUI:
         self.settings_hint = Text(parent=self.settings_root, text=i18n.t('settings.hint'),
                                   origin=(0, 0), y=-.3, scale=.5, color=color.gray)
         self.settings_back = Button(parent=self.settings_root, text=i18n.t('settings.back'),
-                                    scale=(.5, .065), y=-.42, on_click=self.close_settings)
+                                    scale=(.5, .065), color=BUTTON_COLOR,
+                                    y=-.42, on_click=self.close_settings)
 
     # ---------- 刷新 ----------
     def slot_color(self, block_id):
