@@ -10,6 +10,7 @@ Briefcase 要求 sources 里有一个与 app 同名的启动模块（worldbox/__
 """
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / 'briefcase_src'
 DIST = ROOT / 'dist'
+TEMPLATE = ROOT / 'build' / 'appimage-template'
+TEMPLATE_URL = 'https://github.com/beeware/briefcase-linux-appimage-template.git'
+TEMPLATE_BRANCH = 'v0.4.7'
 
 ENTRY = '''"""Briefcase AppImage 入口：以 __main__ 身份运行 app.py。"""
 import os
@@ -39,7 +43,29 @@ def version():
         return tomllib.load(f)['tool']['briefcase']['version']
 
 
+def prepare_template():
+    """克隆官方 AppImage 模板，补上漏声明的 host_arch 变量。
+
+    Briefcase 0.4.7 的模板在 briefcase.toml 里用了 cookiecutter.host_arch，
+    但 cookiecutter.json 没有声明它；cookiecutter 会忽略未声明的 extra_context
+    变量，导致 "OrderedDict object has no attribute 'host_arch'"。
+    """
+    if not TEMPLATE.exists():
+        TEMPLATE.parent.mkdir(parents=True, exist_ok=True)
+        print('>', 'git clone', TEMPLATE_BRANCH, TEMPLATE_URL, flush=True)
+        subprocess.run(['git', 'clone', '--depth', '1', '--branch', TEMPLATE_BRANCH,
+                        TEMPLATE_URL, str(TEMPLATE)], check=True, cwd=ROOT)
+    context_file = TEMPLATE / 'cookiecutter.json'
+    data = json.loads(context_file.read_text(encoding='utf-8'))
+    if 'host_arch' not in data:
+        data['host_arch'] = 'x86_64'
+        context_file.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n',
+                                encoding='utf-8')
+        print('[OK] patched cookiecutter.json: host_arch')
+
+
 def prepare():
+    prepare_template()
     if SRC.exists():
         shutil.rmtree(SRC)
     (SRC / 'worldbox').mkdir(parents=True)

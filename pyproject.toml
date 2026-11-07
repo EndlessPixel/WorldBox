@@ -25,6 +25,8 @@ sources = [
     "briefcase_src/assets",
 ]
 icon = "resources/icon"
+# 官方 v0.4.7 模板漏声明 host_arch，构建脚本会克隆并修补到这个本地目录
+template = "build/appimage-template"
 requires = [
     "ursina==8.3.0",
     "pillow>=10.0.0",
