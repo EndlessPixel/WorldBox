@@ -5,7 +5,8 @@ world_save.json
 config/setting.json
 
 # 资源文件
-assets/worldbox
+assets/*
+!assets/fonts/*
 
 # IDE文件夹
 .idea/

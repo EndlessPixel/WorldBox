@@ -1,6 +1,6 @@
 """游戏 UI：HUD、准心、快捷栏、背包、暂停菜单、设置面板与选中指示器。"""
 
-from ursina import Button, Entity, Text, camera, color, destroy, mouse
+from ursina import Button, Entity, Mesh, Text, camera, color, destroy, mouse
 
 from . import config, i18n, packs
 from .blocks import BLOCK_IDS, BLOCKS
@@ -170,14 +170,24 @@ class GameUI:
                                     y=-.42, on_click=self.close_settings)
 
     # ---------- 刷新 ----------
+    @staticmethod
+    def _clone_mesh(mesh):
+        """Ursina 的 Mesh 是 NodePath：多个 Entity 共用同一实例会被反复
+        reparentTo，最后只有最后创建的那个图标真正挂住网格。每个图标克隆一份。"""
+        return Mesh(vertices=mesh.vertices, triangles=mesh.triangles,
+                    uvs=mesh.uvs, colors=mesh.colors, mode=mesh.mode)
+
     def _make_slot_items(self, bg):
         """在一个格子里生成所有方块的 3D 图标（按 block_id 索引，默认隐藏）。"""
         items = {}
         if self.materials:
             for block_id, mesh in self.materials.item_meshes.items():
-                items[block_id] = Entity(
-                    parent=bg, model=mesh, texture=self.materials.texture,
+                icon = Entity(
+                    parent=bg, model=self._clone_mesh(mesh),
+                    texture=self.materials.texture,
                     scale=(.85, .85, .85), z=.1, enabled=False)
+                icon.set_two_sided(True)   # 顶/左面绕序相反，避免被背面剔除
+                items[block_id] = icon
         return items
 
     def _make_held_icons(self):
@@ -185,11 +195,14 @@ class GameUI:
         icons = {}
         if self.materials:
             for block_id, mesh in self.materials.item_meshes.items():
-                icons[block_id] = Entity(
-                    parent=camera.ui, model=mesh, texture=self.materials.texture,
+                icon = Entity(
+                    parent=camera.ui, model=self._clone_mesh(mesh),
+                    texture=self.materials.texture,
                     scale=(config.SLOT_SIZE * .85, config.SLOT_SIZE * .85,
                            config.SLOT_SIZE * .85),
                     enabled=False, z=1)
+                icon.set_two_sided(True)
+                icons[block_id] = icon
         return icons
 
     def apply_materials(self, materials):
