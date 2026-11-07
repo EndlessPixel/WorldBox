@@ -1,0 +1,14 @@
+# 游戏存档
+world_save.json
+
+# IDE文件夹
+.idea/
+.vscode/
+.codebuddy/
+
+# 日志文件
+logs/
+
+# Python
+__pycache__/
+*.pyc
