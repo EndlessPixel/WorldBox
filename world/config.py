@@ -10,6 +10,8 @@ CONFIG_DIR = ROOT_DIR / 'config'
 # 配置文件优先放 config/ 目录，同时兼容放在项目根目录的旧布局
 SETTINGS_FILE = CONFIG_DIR / 'setting.json'
 BLOCKS_FILE = CONFIG_DIR / 'blocks.json'
+# 资源包定义目录（默认世界不下载纹理，用程序生成的噪声材质）
+RESOURCE_PACK_DIR = CONFIG_DIR / 'resource_packs'
 if not SETTINGS_FILE.exists() and (ROOT_DIR / 'setting.json').exists():
     SETTINGS_FILE = ROOT_DIR / 'setting.json'
 if not BLOCKS_FILE.exists() and (ROOT_DIR / 'blocks.json').exists():
@@ -29,6 +31,7 @@ DEFAULT_SETTINGS = {
     'view_bob': 0.03,           # 移动时视角晃动幅度（米）
     'brightness': 1.0,          # 画面亮度（0.3 ~ 2.0）
     'language': 'zh',           # 界面语言：zh / en
+    'resource_pack': '',        # 资源包 id（'' = 自带默认包 worldbox）
 }
 
 
@@ -63,6 +66,9 @@ def load_settings():
     settings['brightness'] = _cfg_number(raw.get('brightness'), 1.0, 0.3, 2.0)
     if raw.get('language') in ('zh', 'en'):
         settings['language'] = raw['language']
+    pack = raw.get('resource_pack')
+    if isinstance(pack, str):
+        settings['resource_pack'] = pack.strip()
     print('[设置] ' + ', '.join(f'{k}={v}' for k, v in settings.items()))
     return settings
 
@@ -144,6 +150,8 @@ def apply_settings(updates):
             SETTINGS[key] = _cfg_number(updates[key], SETTINGS[key], low, high)
     if updates.get('language') in ('zh', 'en'):
         SETTINGS['language'] = updates['language']
+    if isinstance(updates.get('resource_pack'), str):
+        SETTINGS['resource_pack'] = updates['resource_pack'].strip()
 
     AUTO_JUMP = SETTINGS['auto_jump']
     AUTO_JUMP_HEIGHT = SETTINGS['auto_jump_height']

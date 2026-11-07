@@ -3,12 +3,14 @@
 """
 cdn-assets.json 资源下载器
 
-读取当前目录下的 cdn-assets.json，按其定义的 URL -> 相对路径 映射下载文件。
+读取 cdn-assets.json（url -> 相对路径 映射，可选顶层 "id" 字段标明资源包
+命名空间），按从上到下的顺序下载文件；带 id 时会把形如
+"assets/<旧命名空间>/..." 的目标路径重定向到 "assets/<id>/..."。
 
 用法：
-    python download_cdn_assets.py
-    python download_cdn_assets.py -F                  # 强制覆盖
-    python download_cdn_assets.py -f my.json -r dist  # 指定文件与根目录
+    python cdn_download.py
+    python cdn_download.py -F                  # 强制覆盖
+    python cdn_download.py -f my.json -r dist  # 指定文件与根目录
 """
 
 import argparse
@@ -21,7 +23,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-CONFIG_FILE = "config/cdn-assets.json"
+CONFIG_FILE = "config/resource_packs/minecraft.json"
 USER_AGENT = "Mozilla/5.0 (compatible; cdn-assets-downloader/1.0)"
 
 
@@ -57,6 +59,8 @@ def extract_from_list(items):
 def extract_from_dict(obj):
     mapping = {}
     for k, v in obj.items():
+        if k == 'id':          # 资源包命名空间字段，不是下载条目
+            continue
         if isinstance(v, str):
             pair = parse_entry(k, v)
             if pair:
@@ -70,27 +74,80 @@ def extract_from_dict(obj):
     return mapping
 
 
-def load_mapping(path):
+def remap_namespace(dest, pack_id):
+    """带 id 的资源包：把 dest 里的命名空间段（assets/<ns>/...）替换为 pack_id。"""
+    if not pack_id:
+        return dest
+    parts = dest.split('/')
+    if len(parts) >= 2 and parts[0] == 'assets':
+        parts[1] = pack_id
+        return '/'.join(parts)
+    return dest
+
+
+def load_pack(path):
+    """读取资源包配置，返回 (pack_id, [(url, dest), ...])。
+
+    顺序保持文件里从上到下的定义顺序（后加载的覆盖先加载的）。
+    """
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    # 解包一层常见包装
+    pack_id = None
     if isinstance(data, dict):
+        raw_id = data.get("id")
+        if isinstance(raw_id, str) and raw_id.strip():
+            pack_id = raw_id.strip()
+        # 解包一层常见包装
         for key in ("assets", "files", "entries", "items"):
             if key in data and isinstance(data[key], (dict, list)):
                 data = data[key]
                 break
 
     if isinstance(data, list):
-        mapping = extract_from_list(data)
+        pairs = list(extract_from_list(data).items())
     elif isinstance(data, dict):
-        mapping = extract_from_dict(data)
+        pairs = list(extract_from_dict(data).items())
     else:
         raise ValueError("无法识别的 JSON 结构")
 
-    if not mapping:
+    entries = [(url, remap_namespace(dest, pack_id)) for url, dest in pairs]
+    if not entries:
         raise ValueError("没有解析出任何 URL -> 路径 映射")
-    return mapping
+    return pack_id, entries
+
+
+def load_mapping(path):
+    """兼容旧接口：只返回 url -> dest 的有序映射。"""
+    return dict(load_pack(path)[1])
+
+
+def read_pack_id(path):
+    """只读资源包 id；解析失败返回 None。"""
+    try:
+        return load_pack(path)[0]
+    except Exception:
+        return None
+
+
+def ensure_pack(path, root=Path("."), force=False,
+                timeout=30, retries=3, log=True):
+    """程序化接口：确保一个资源包的纹理都已下载到 root。
+
+    返回 (成功数, 失败数)。已存在的文件默认跳过。
+    """
+    pack_id, entries = load_pack(path)
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    if log:
+        print(f"[资源包] {pack_id or '(未命名)'} <- {path}，共 {len(entries)} 项")
+    ok = fail = 0
+    for url, dest in entries:
+        if download_one(url, dest, root, force, timeout, retries, log=log):
+            ok += 1
+        else:
+            fail += 1
+    return ok, fail
 
 
 # ---------- 下载 ----------
@@ -113,7 +170,11 @@ def normalize_url(url: str) -> str:
 
 
 def download_one(url: str, dest: str, root: Path, force: bool,
-                 timeout: int, retries: int) -> bool:
+                 timeout: int, retries: int, log=True) -> bool:
+    def say(msg):
+        if log:
+            print(msg)
+
     target = (root / dest).resolve()
     root_resolved = root.resolve()
 
@@ -121,11 +182,11 @@ def download_one(url: str, dest: str, root: Path, force: bool,
     try:
         target.relative_to(root_resolved)
     except ValueError:
-        print(f"  ✗ 拒绝越界路径: {dest}")
+        say(f"  ✗ 拒绝越界路径: {dest}")
         return False
 
     if target.exists() and not force:
-        print(f"  ↷ 已存在，跳过 ({fmt_size(target.stat().st_size)})")
+        say(f"  ↷ 已存在，跳过 ({fmt_size(target.stat().st_size)})")
         return True
 
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -145,23 +206,24 @@ def download_one(url: str, dest: str, root: Path, force: bool,
                             break
                         f.write(chunk)
                         done += len(chunk)
-                        if total:
-                            pct = done * 100 // total
-                            sys.stdout.write(
-                                f"\r  ↓ {pct:3d}%  {fmt_size(done)}/{fmt_size(total)}"
-                            )
+                        if log:
+                            if total:
+                                pct = done * 100 // total
+                                sys.stdout.write(
+                                    f"\r  ↓ {pct:3d}%  {fmt_size(done)}/{fmt_size(total)}"
+                                )
+                            else:
+                                sys.stdout.write(f"\r  ↓ {fmt_size(done)}")
                             sys.stdout.flush()
-                        else:
-                            sys.stdout.write(f"\r  ↓ {fmt_size(done)}")
-                            sys.stdout.flush()
-            sys.stdout.write("\r" + " " * 60 + "\r")
+            if log:
+                sys.stdout.write("\r" + " " * 60 + "\r")
             tmp.replace(target)
-            print(f"  ✓ 完成 → {dest}  ({fmt_size(target.stat().st_size)})")
+            say(f"  ✓ 完成 → {dest}  ({fmt_size(target.stat().st_size)})")
             return True
         except urllib.error.HTTPError as e:
-            print(f"  ✗ HTTP {e.code}: {e.reason}  (第 {attempt}/{retries} 次)")
+            say(f"  ✗ HTTP {e.code}: {e.reason}  (第 {attempt}/{retries} 次)")
         except Exception as e:
-            print(f"  ✗ {type(e).__name__}: {e}  (第 {attempt}/{retries} 次)")
+            say(f"  ✗ {type(e).__name__}: {e}  (第 {attempt}/{retries} 次)")
 
         if tmp.exists():
             try:
@@ -171,7 +233,7 @@ def download_one(url: str, dest: str, root: Path, force: bool,
         if attempt < retries:
             time.sleep(min(2 ** attempt, 10))
 
-    print(f"  ✗ 放弃: {url}")
+    say(f"  ✗ 放弃: {url}")
     return False
 
 
@@ -192,7 +254,10 @@ def main():
         sys.exit(1)
 
     try:
-        mapping = load_mapping(cfg_path)
+        pack_id, mapping_list = load_pack(cfg_path)
+        mapping = dict(mapping_list)
+        if pack_id:
+            print(f"资源包 id: {pack_id}（命名空间 assets/{pack_id}/）")
     except Exception as e:
         print(f"✗ 解析 {cfg_path} 失败: {e}")
         sys.exit(1)

@@ -1,16 +1,7 @@
 """
 3D 世界 - Python + Ursina
 =========================
-入口文件。游戏主体拆分在 world/ 包里：
-
-- world/config.py   配置与 setting.json
-- world/blocks.py   方块表（blocks.json）
-- world/storage.py  存档读写（world_save.json）
-- world/inputs.py   X11 物理键鼠轮询
-- world/voxel.py    体素数据、区块网格、射线
-- world/player.py   玩家移动/视角/跳跃/重力
-- world/ui.py       HUD、快捷栏、背包、菜单、准心
-- world/game.py     输入分发、每帧更新、挖掘/放置、昼夜
+入口文件。游戏主体拆分在 world/ 包里
 
 操作：WASD 移动 / Ctrl 疾跑 / Space 跳 / Shift 蹲 / C 放大
       左键挖 / 右键放 / 中键取方块 / 滚轮切快捷栏 / 1-9 选格

@@ -1,8 +1,8 @@
 """游戏 UI：HUD、准心、快捷栏、背包、暂停菜单、设置面板与选中指示器。"""
 
-from ursina import Button, Entity, Text, camera, color, mouse
+from ursina import Button, Entity, Text, camera, color, destroy, mouse
 
-from . import config, i18n
+from . import config, i18n, packs
 from .blocks import BLOCK_IDS, BLOCKS
 from .storage import _save_number
 
@@ -13,7 +13,7 @@ if config.CJK_FONT:
 BUTTON_COLOR = color.rgba(.58, .62, .68, 1)
 
 SETTING_KEYS = (
-    'language', 'auto_jump', 'auto_jump_height',
+    'language', 'resource_pack', 'auto_jump', 'auto_jump_height',
     'view_distance', 'fov', 'view_bob', 'brightness',
 )
 # key -> (最小值, 最大值, 步进, 小数位)
@@ -91,12 +91,7 @@ class GameUI:
             x = (i - (config.HOTBAR_SLOTS - 1) / 2) * step
             bg = Entity(parent=self.hotbar_root, model='quad', color=color.black66,
                         scale=(config.SLOT_SIZE, config.SLOT_SIZE), x=x, y=-.44, z=-1)
-            items = {}
-            if self.materials:
-                for block_id, mesh in self.materials.item_meshes.items():
-                    items[block_id] = Entity(
-                        parent=bg, model=mesh, texture=self.materials.texture,
-                        scale=(.85, .85, .85), z=.1, enabled=False)
+            items = self._make_slot_items(bg)
             Text(parent=bg, text=str(i + 1), origin=(-.5, -.5),
                  position=(-.44, -.44), scale=.45, z=.2)
             self.hotbar_ui.append((bg, items))
@@ -120,22 +115,10 @@ class GameUI:
                 bg = Entity(parent=self.inventory_root, model='quad',
                             color=color.black90, scale=(config.SLOT_SIZE, config.SLOT_SIZE),
                             x=x, y=y, z=-1)
-                items = {}
-                if self.materials:
-                    for block_id, mesh in self.materials.item_meshes.items():
-                        items[block_id] = Entity(
-                            parent=bg, model=mesh, texture=self.materials.texture,
-                            scale=(.85, .85, .85), z=.1, enabled=False)
+                items = self._make_slot_items(bg)
                 self.inventory_ui.append((bg, items))
 
-        self.held_icons = {}
-        if self.materials:
-            for block_id, mesh in self.materials.item_meshes.items():
-                self.held_icons[block_id] = Entity(
-                    parent=camera.ui, model=mesh, texture=self.materials.texture,
-                    scale=(config.SLOT_SIZE * .85, config.SLOT_SIZE * .85,
-                           config.SLOT_SIZE * .85),
-                    enabled=False, z=1)
+        self.held_icons = self._make_held_icons()
 
     def _build_menu(self):
         self.menu_root = Entity(parent=camera.ui, enabled=False)
@@ -187,6 +170,43 @@ class GameUI:
                                     y=-.42, on_click=self.close_settings)
 
     # ---------- 刷新 ----------
+    def _make_slot_items(self, bg):
+        """在一个格子里生成所有方块的 3D 图标（按 block_id 索引，默认隐藏）。"""
+        items = {}
+        if self.materials:
+            for block_id, mesh in self.materials.item_meshes.items():
+                items[block_id] = Entity(
+                    parent=bg, model=mesh, texture=self.materials.texture,
+                    scale=(.85, .85, .85), z=.1, enabled=False)
+        return items
+
+    def _make_held_icons(self):
+        """背包里跟随鼠标的手持图标。"""
+        icons = {}
+        if self.materials:
+            for block_id, mesh in self.materials.item_meshes.items():
+                icons[block_id] = Entity(
+                    parent=camera.ui, model=mesh, texture=self.materials.texture,
+                    scale=(config.SLOT_SIZE * .85, config.SLOT_SIZE * .85,
+                           config.SLOT_SIZE * .85),
+                    enabled=False, z=1)
+        return icons
+
+    def apply_materials(self, materials):
+        """资源包切换后：重建快捷栏/背包/手持图标并刷新显示。"""
+        self.materials = materials
+        for slots in (self.hotbar_ui, self.inventory_ui):
+            for bg, items in slots:
+                for icon in items.values():
+                    destroy(icon)
+                items.clear()
+                items.update(self._make_slot_items(bg))
+        for icon in self.held_icons.values():
+            destroy(icon)
+        self.held_icons = self._make_held_icons()
+        self.refresh_hotbar()
+        self.refresh_inventory()
+
     def slot_color(self, block_id):
         r, g, b = BLOCKS[block_id]['color']
         return color.rgba(r / 255, g / 255, b / 255, 1)
@@ -225,6 +245,8 @@ class GameUI:
         value = config.SETTINGS.get(key)
         if key == 'language':
             return i18n.t('language.name')
+        if key == 'resource_pack':
+            return i18n.pack_name(value or packs.DEFAULT_PACK_ID)
         if key == 'auto_jump':
             return i18n.t('settings.on' if value else 'settings.off')
         if key == 'auto_jump_height':
@@ -242,6 +264,14 @@ class GameUI:
             current = config.SETTINGS.get('language', 'zh')
             index = (languages.index(current) + delta) % len(languages)
             self.set_language(languages[index])
+            return
+        if key == 'resource_pack':
+            options = [''] + [pid for pid, _ in packs.available_packs() if pid]
+            current = config.SETTINGS.get('resource_pack', '')
+            index = options.index(current) if current in options else 0
+            config.apply_settings(
+                {'resource_pack': options[(index + delta) % len(options)]})
+            self.refresh_settings()
             return
         if key == 'auto_jump':
             config.apply_settings(

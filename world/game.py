@@ -5,8 +5,9 @@ import math
 
 from ursina import Sky, application, camera, color, held_keys, mouse, time, window
 
-from . import blocks, config, i18n, storage
+from . import blocks, config, i18n, packs, storage
 from .inputs import PhysicalKeys
+from .materials import BlockMaterials
 from .player import Player
 from .ui import GameUI
 from .voxel import VoxelWorld
@@ -16,6 +17,10 @@ class Game:
     def __init__(self):
         self.save_data = storage.load_save()
         print(f'[存档] {"已读取 " + config.SAVE_FILE.name if self.save_data else "无存档，使用默认世界"}')
+
+        # 加载资源包（默认包 + 设置里选中的包），缺纹理时从 CDN 下载
+        packs.ensure_active()
+        self._pack = config.SETTINGS.get('resource_pack') or ''
 
         self.world = VoxelWorld(self.save_data)
         self.player = Player(self.world, self.save_data)
@@ -64,6 +69,17 @@ class Game:
         self.save()
         application.quit()
 
+    def _apply_resource_pack(self, pack_id):
+        """切换资源包：确保纹理已下载，重建材质、区块网格与物品图标。"""
+        self._pack = pack_id
+        if pack_id:
+            packs.ensure_pack(pack_id)
+        self.world.materials = BlockMaterials()
+        self.world.build_all()
+        self.ui.apply_materials(self.world.materials)
+        self.notice = i18n.t('notice.pack_switched')
+        self.notice_timer = 2.0
+
     # ---------- 输入 ----------
     def input(self, key):
         if key == 'scroll up':
@@ -98,6 +114,11 @@ class Game:
             self._language = i18n.get_language()
             self.notice = i18n.t('notice.help')
             self.notice_timer = 3.0
+
+        # --- 资源包切换：下载纹理并热重载材质 ---
+        active_pack = config.SETTINGS.get('resource_pack') or ''
+        if active_pack != self._pack:
+            self._apply_resource_pack(active_pack)
 
         # --- 物理按键状态（X11）；非 X11 平台回退到 Ursina 事件层 ---
         keys = self.keyboard.snapshot()

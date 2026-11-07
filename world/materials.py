@@ -40,7 +40,12 @@ SURFACE_FILES = {
 
 class BlockMaterials:
     def __init__(self):
-        self.texture_dir = config.ROOT_DIR / 'assets' / 'worldbox' / 'blocks'
+        # 当前资源包命名空间：'' = 自带默认包 worldbox
+        namespace = config.SETTINGS.get('resource_pack') or 'worldbox'
+        texture_dir = config.ROOT_DIR / 'assets' / namespace / 'blocks'
+        if not texture_dir.is_dir():
+            texture_dir = config.ROOT_DIR / 'assets' / 'worldbox' / 'blocks'
+        self.texture_dir = texture_dir
         self.block_ids = list(BLOCK_IDS)
         width = max(1, len(self.block_ids)) * TILE
         self.atlas = Image.new('RGBA', (width, TILE * 3), (0, 0, 0, 0))

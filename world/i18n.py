@@ -23,6 +23,9 @@ TEXTS = {
         'settings.fov': '视场角',
         'settings.view_bob': '视角晃动',
         'settings.brightness': '亮度',
+        'settings.resource_pack': '资源包',
+        'pack.worldbox': '默认',
+        'pack.minecraft': 'Minecraft 26.3',
         'settings.on': '开',
         'settings.off': '关',
         'notice.help': '左键挖 / 右键放 / 中键取方块 / 滚轮切快捷栏 / E 背包',
@@ -30,6 +33,7 @@ TEXTS = {
         'notice.save_failed': '保存失败',
         'notice.bedrock': '基岩 - 无法破坏',
         'notice.fell': '掉出世界 - 已传送回出生点',
+        'notice.pack_switched': '资源包已切换',
         'hud.menu': '菜单',
         'hud.inventory': '背包',
         'hud.eye': '眼高',
@@ -61,6 +65,8 @@ TEXTS = {
         'settings.fov': 'FOV',
         'settings.view_bob': 'View Bob',
         'settings.brightness': 'Brightness',
+        'settings.resource_pack': 'Resource Pack',
+        'pack.worldbox': 'Default',
         'settings.on': 'ON',
         'settings.off': 'OFF',
         'notice.help': 'LMB dig / RMB place / MMB pick / wheel hotbar / E inventory',
@@ -68,6 +74,7 @@ TEXTS = {
         'notice.save_failed': 'SAVE FAILED',
         'notice.bedrock': 'BEDROCK - unbreakable',
         'notice.fell': 'FELL OUT OF WORLD - TELEPORTED TO SPAWN',
+        'notice.pack_switched': 'RESOURCE PACK SWITCHED',
         'hud.menu': 'MENU',
         'hud.inventory': 'INVENTORY',
         'hud.eye': 'EYE',
@@ -111,3 +118,8 @@ def block_name(block_id, default):
     """按方块 ID 后缀查翻译（grass/dirt/stone/bedrock），未收录时用 default。"""
     suffix = str(block_id).split(':')[-1].split('.')[0]
     return TEXTS.get(_language, {}).get(f'block.{suffix}', default)
+
+
+def pack_name(pack_id):
+    """资源包显示名：有翻译用翻译，否则直接显示 id。"""
+    return TEXTS.get(_language, {}).get(f'pack.{pack_id}') or pack_id
