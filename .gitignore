@@ -1,6 +1,9 @@
 # 游戏存档
 world_save.json
 
+# 配置文件
+config/setting.json
+
 # IDE文件夹
 .idea/
 .vscode/
