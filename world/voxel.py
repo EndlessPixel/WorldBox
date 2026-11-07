@@ -6,6 +6,7 @@ from ursina import Entity, Mesh, color, destroy
 
 from . import config
 from .blocks import BLOCKS, DEFAULT_BLOCK_ID
+from .materials import BlockMaterials
 
 # 六个面：邻接方向、4 个顶点偏移、明暗系数
 FACES = (
@@ -26,6 +27,7 @@ class VoxelWorld:
         self.chunk_meshes = {}     # (cx, cz) -> Entity
         self.chunks_per_axis = math.ceil(config.WORLD_SIZE / config.CHUNK_SIZE)
         self.block_tint = color.white
+        self.materials = BlockMaterials()
 
         self._fill_layers()
         self._apply_saved_edits(save_data)
@@ -86,7 +88,7 @@ class VoxelWorld:
             block_id = self.world_blocks.get((x, y, z))
             if block_id is None:
                 continue
-            r, g, b = BLOCKS.get(block_id, BLOCKS[DEFAULT_BLOCK_ID])['color']
+            uv_set = self.materials.uvs.get(block_id, self.materials.uvs[DEFAULT_BLOCK_ID])
             checker = 1.0 if (x + z) % 2 == 0 else 0.94   # 棋盘微调，方便看出 1 米格
             for (nx, ny, nz), corners, shade in FACES:
                 if ny == -1 and y == config.MIN_BLOCK_Y:
@@ -95,10 +97,13 @@ class VoxelWorld:
                     continue                               # 相邻方块遮挡，跳过该面
                 start = len(vertices)
                 factor = shade * checker
-                for ox, oy, oz in corners:
+                face = 'top' if ny == 1 else ('bottom' if ny == -1 else 'side')
+                u0, v0, u1, v1 = uv_set[face]
+                face_uv = ((u0, v0), (u0, v1), (u1, v1), (u1, v0))
+                for (ox, oy, oz), (uu, vv) in zip(corners, face_uv):
                     vertices.append((x + ox, y + oy, z + oz))
-                    colors.append((r / 255 * factor, g / 255 * factor, b / 255 * factor, 1.0))
-                    uvs.append((0.0, 0.0))
+                    colors.append((factor, factor, factor, 1.0))
+                    uvs.append((uu, vv))
                 triangles.extend(((start, start + 1, start + 2), (start, start + 2, start + 3)))
         return Mesh(vertices=vertices, triangles=triangles, colors=colors, uvs=uvs, mode='triangle')
 
@@ -108,7 +113,7 @@ class VoxelWorld:
             destroy(old)
         mesh = self.build_chunk_mesh(cx, cz)
         if mesh.vertices:
-            entity = Entity(model=mesh, texture='white_cube')
+            entity = Entity(model=mesh, texture=self.materials.texture)
             entity.set_two_sided(True)   # 兜底：即使绕序偏差也不会出现空洞
             entity.color = self.block_tint
             self.chunk_meshes[(cx, cz)] = entity

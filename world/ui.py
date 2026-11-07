@@ -24,9 +24,10 @@ SETTING_SPECS = {
 
 
 class GameUI:
-    def __init__(self, save_data=None, on_save=None, on_quit=None):
+    def __init__(self, save_data=None, materials=None, on_save=None, on_quit=None):
         self.on_save = on_save
         self.on_quit = on_quit
+        self.materials = materials
         self.inventory_open = False
         self.held_item = None
         self.menu_state = {'open': False, 'index': 0}
@@ -87,16 +88,20 @@ class GameUI:
             x = (i - (config.HOTBAR_SLOTS - 1) / 2) * step
             bg = Entity(parent=self.hotbar_root, model='quad', color=color.black66,
                         scale=(config.SLOT_SIZE, config.SLOT_SIZE), x=x, y=-.44, z=-1)
-            item = Entity(parent=bg, model='quad', color=color.white,
-                          scale=(.72, .72), z=-.01)
+            items = {}
+            if self.materials:
+                for block_id, mesh in self.materials.item_meshes.items():
+                    items[block_id] = Entity(
+                        parent=bg, model=mesh, texture=self.materials.texture,
+                        scale=(.85, .85, .85), z=.1, enabled=False)
             Text(parent=bg, text=str(i + 1), origin=(-.5, -.5),
-                 position=(-.44, -.44), scale=.45, z=-.02)
-            self.hotbar_ui.append((bg, item))
+                 position=(-.44, -.44), scale=.45, z=.2)
+            self.hotbar_ui.append((bg, items))
 
     def _build_inventory(self):
         self.inventory_root = Entity(parent=camera.ui, enabled=False)
         Entity(parent=self.inventory_root, model='quad', color=color.black66,
-               scale=(3, 2), z=0)
+               scale=(3, 2), z=-10)
         self.inventory_title = Text(parent=self.inventory_root, text=i18n.t('inventory.title'),
                                     origin=(0, 0), y=.34, scale=1.5, z=-.02)
         self.inventory_hint = Text(parent=self.inventory_root, text=i18n.t('inventory.hint'),
@@ -112,17 +117,27 @@ class GameUI:
                 bg = Entity(parent=self.inventory_root, model='quad',
                             color=color.black90, scale=(config.SLOT_SIZE, config.SLOT_SIZE),
                             x=x, y=y, z=-1)
-                item = Entity(parent=bg, model='quad', color=color.white,
-                              scale=(.72, .72), z=-.01)
-                self.inventory_ui.append((bg, item))
+                items = {}
+                if self.materials:
+                    for block_id, mesh in self.materials.item_meshes.items():
+                        items[block_id] = Entity(
+                            parent=bg, model=mesh, texture=self.materials.texture,
+                            scale=(.85, .85, .85), z=.1, enabled=False)
+                self.inventory_ui.append((bg, items))
 
-        self.held_icon = Entity(parent=camera.ui, model='quad', color=color.white,
-                                scale=(config.SLOT_SIZE * .72, config.SLOT_SIZE * .72),
-                                enabled=False, z=-3)
+        self.held_icons = {}
+        if self.materials:
+            for block_id, mesh in self.materials.item_meshes.items():
+                self.held_icons[block_id] = Entity(
+                    parent=camera.ui, model=mesh, texture=self.materials.texture,
+                    scale=(config.SLOT_SIZE * .85, config.SLOT_SIZE * .85,
+                           config.SLOT_SIZE * .85),
+                    enabled=False, z=1)
 
     def _build_menu(self):
         self.menu_root = Entity(parent=camera.ui, enabled=False)
-        Entity(parent=self.menu_root, model='quad', color=color.black66, scale=(3, 2))
+        Entity(parent=self.menu_root, model='quad', color=color.black66,
+               scale=(3, 2), z=-10)
         self.menu_title = Text(parent=self.menu_root, text=i18n.t('menu.paused'),
                                origin=(0, 0), y=.32, scale=2)
         self.menu_status = Text(parent=self.menu_root, text='', origin=(0, 0),
@@ -143,7 +158,8 @@ class GameUI:
 
     def _build_settings(self):
         self.settings_root = Entity(parent=camera.ui, enabled=False)
-        Entity(parent=self.settings_root, model='quad', color=color.black66, scale=(3, 2))
+        Entity(parent=self.settings_root, model='quad', color=color.black66,
+               scale=(3, 2), z=-10)
         self.settings_title = Text(parent=self.settings_root, text=i18n.t('settings.title'),
                                    origin=(0, 0), y=.42, scale=1.5)
 
@@ -171,20 +187,20 @@ class GameUI:
         return color.rgba(r / 255, g / 255, b / 255, 1)
 
     def refresh_hotbar(self):
-        for i, (bg, item) in enumerate(self.hotbar_ui):
+        for i, (bg, items) in enumerate(self.hotbar_ui):
             block_id = self.hotbar[i]
-            item.enabled = block_id is not None
-            if block_id is not None:
-                item.color = self.slot_color(block_id)
-            bg.color = color.white if i == self.selected_slot else color.black66
+            for item_id, icon in items.items():
+                icon.enabled = (item_id == block_id)
+            bg.color = (color.rgba(1, 1, 1, .35) if i == self.selected_slot
+                        else color.black66)
 
     def refresh_inventory(self):
-        for i, (bg, item) in enumerate(self.inventory_ui):
+        for i, (bg, items) in enumerate(self.inventory_ui):
             block_id = self.inventory[i]
-            item.enabled = block_id is not None
-            if block_id is not None:
-                item.color = self.slot_color(block_id)
-            bg.color = color.white if i == self.inv_selected else color.black90
+            for item_id, icon in items.items():
+                icon.enabled = (item_id == block_id)
+            bg.color = (color.rgba(1, 1, 1, .35) if i == self.inv_selected
+                        else color.black90)
 
     def refresh_menu_highlight(self):
         for i, button in enumerate(self.menu_buttons):
@@ -288,7 +304,8 @@ class GameUI:
                     self.inventory[i] = self.held_item
                     break
             self.held_item = None
-            self.held_icon.enabled = False
+            for icon in self.held_icons.values():
+                icon.enabled = False
         self.inventory_open = False
         self.inventory_root.enabled = False
         self.refresh_inventory()
@@ -364,9 +381,7 @@ class GameUI:
                 self.refresh_hotbar()
 
         # 手上的方块跟随鼠标
-        if self.held_item is not None and point is not None:
-            self.held_icon.position = (point[0], point[1], -3)
-            self.held_icon.color = self.slot_color(self.held_item)
-            self.held_icon.enabled = True
-        else:
-            self.held_icon.enabled = False
+        for block_id, icon in self.held_icons.items():
+            icon.enabled = (block_id == self.held_item and point is not None)
+            if icon.enabled:
+                icon.position = (point[0], point[1], -3)

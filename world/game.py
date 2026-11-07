@@ -19,7 +19,8 @@ class Game:
 
         self.world = VoxelWorld(self.save_data)
         self.player = Player(self.world, self.save_data)
-        self.ui = GameUI(self.save_data, on_save=self.save, on_quit=self.quit)
+        self.ui = GameUI(self.save_data, self.world.materials,
+                         on_save=self.save, on_quit=self.quit)
         self.keyboard = PhysicalKeys()
         self.sky = Sky()
 
