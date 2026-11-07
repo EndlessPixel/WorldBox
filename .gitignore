@@ -1,22 +1,32 @@
-# 游戏存档
+# 游戏存档 / 运行时数据
 world_save.json
+world_save.json.*
+*.log
 
-# 配置文件
+# 本地配置（含旧布局根目录位置；config/blocks.json 是方块表，需要入库）
 config/setting.json
 config/keys.json
+/setting.json
+/blocks.json
+/cdn-assets.json
 
-# 资源文件
-assets/*
-!assets/fonts/*
+# 运行时资源：MC 纹理由 CDN 下载、中文字体从系统复制，都不应提交。
+# 注意：已有历史提交里包含 5 张 MC 纹理和 NotoSansCJK-Regular.ttc，需另行清理历史。
+/assets/
 
-# IDE文件夹
+# Python / 虚拟环境
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# 下载器与原子写入的临时文件
+*.part
+*.tmp
+
+# IDE / 工具
 .idea/
 .vscode/
 .codebuddy/
-
-# 日志文件
 logs/
-
-# Python
-__pycache__/
-*.pyc
