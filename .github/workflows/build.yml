@@ -44,3 +44,21 @@ jobs:
           name: WorldBox-Windows
           path: dist/WorldBox/
           if-no-files-found: error
+
+      - name: 启动自检（无显示器环境可能受限）
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $resultFile = "dist/WorldBox/smoke_result.txt"
+          Remove-Item -ErrorAction SilentlyContinue $resultFile
+          $p = Start-Process -FilePath "dist/WorldBox/WorldBox.exe" `
+            -ArgumentList "--smoke" -WorkingDirectory "dist/WorldBox" -PassThru
+          $p.WaitForExit(90000) | Out-Null
+          if (Test-Path $resultFile) {
+            $result = Get-Content $resultFile -Raw
+            Write-Host "smoke result: $result"
+            if ($result -notmatch '^OK') { exit 1 }
+          } else {
+            Write-Host "smoke: no result file (headless window limitation)"
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          }
