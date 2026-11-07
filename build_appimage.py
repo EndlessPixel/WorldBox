@@ -128,7 +128,15 @@ def build():
         print('[X] No .AppImage produced')
         return 1
     DIST.mkdir(exist_ok=True)
-    shutil.copy2(max(images, key=lambda p: p.stat().st_mtime), target)
+    source = max(images, key=lambda p: p.stat().st_mtime)
+    shutil.copy2(source, target)
+    # 删掉 Briefcase 原始命名的产物，避免发布时上传两份相同的 AppImage
+    for other in images:
+        try:
+            if other.resolve() != target.resolve():
+                other.unlink()
+        except OSError:
+            pass
     print('[OK]', target)
     return 0
 
