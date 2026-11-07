@@ -1,0 +1,7 @@
+{
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/bedrock.png": "assets/worldbox/blocks/bedrock.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/coarse_dirt.png": "assets/worldbox/blocks/coarse_dirt.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/grass_block_top.png": "assets/worldbox/blocks/grass_block_top.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/grass_block_side.png": "assets/worldbox/blocks/grass_block_side.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/stone.png": "Assets/worldbox/blocks/stone.png"
+}

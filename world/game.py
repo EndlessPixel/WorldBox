@@ -1,0 +1,357 @@
+"""游戏编排：输入分发、每帧更新、挖掘/放置、昼夜、视距剔除与存档。"""
+
+import atexit
+import math
+
+from ursina import Sky, application, camera, color, held_keys, mouse, time, window
+
+from . import blocks, config, i18n, storage
+from .inputs import PhysicalKeys
+from .player import Player
+from .ui import GameUI
+from .voxel import VoxelWorld
+
+
+class Game:
+    def __init__(self):
+        self.save_data = storage.load_save()
+        print(f'[存档] {"已读取 " + config.SAVE_FILE.name if self.save_data else "无存档，使用默认世界"}')
+
+        self.world = VoxelWorld(self.save_data)
+        self.player = Player(self.world, self.save_data)
+        self.ui = GameUI(self.save_data, on_save=self.save, on_quit=self.quit)
+        self.keyboard = PhysicalKeys()
+        self.sky = Sky()
+
+        self.day_time = config.START_DAY_TIME
+        if self.save_data:
+            self.day_time = storage._save_number(
+                self.save_data.get('day_time'), self.day_time, 0.0, 1.0) % 1.0
+        self.last_solar = -2.0
+        self.hud_timer = 0.0
+        self.hud_frames = 0
+        self.prev_keys = set()
+        self.prev_left = False
+        self.prev_middle = False
+        self.prev_right = False
+        self.pending_scroll = 0
+        self.notice = i18n.t('notice.help')
+        self.notice_timer = 10.0
+        self.autosave_timer = 0.0
+        self._language = i18n.get_language()
+
+        mouse.locked = True
+        atexit.register(self.save)   # 覆盖窗口关闭 / alt+F4 等退出路径
+
+    # ---------- 存档 ----------
+    def save(self):
+        payload = {
+            'version': 2,
+            'x': round(self.player.pos.x, 4),
+            'z': round(self.player.pos.z, 4),
+            'yaw': round(self.player.yaw % 360, 4),
+            'pitch': round(self.player.pitch, 4),
+            'blocks': {f'{x},{y},{z}': block_id
+                       for (x, y, z), block_id in self.world.world_edits.items()},
+            'hotbar': self.ui.hotbar,
+            'selected_slot': self.ui.selected_slot,
+            'day_time': round(self.day_time, 5),
+        }
+        return storage.save_payload(payload)
+
+    def quit(self):
+        self.save()
+        application.quit()
+
+    # ---------- 输入 ----------
+    def input(self, key):
+        if key == 'scroll up':
+            self.pending_scroll += 1
+        elif key == 'scroll down':
+            self.pending_scroll -= 1
+        if (key == 'left mouse down' and not self.ui.menu_state['open']
+                and not self.ui.inventory_open and not mouse.locked):
+            mouse.locked = True
+
+    # ---------- 每帧更新 ----------
+    def update(self):
+        raw_dt = time.dt
+        if raw_dt <= 0:
+            return
+        dt = min(raw_dt, 0.05)
+
+        # --- 语言切换后刷新常驻提示 ---
+        if i18n.get_language() != self._language:
+            self._language = i18n.get_language()
+            self.notice = i18n.t('notice.help')
+            self.notice_timer = 3.0
+
+        # --- 物理按键状态（X11）；非 X11 平台回退到 Ursina 事件层 ---
+        keys = self.keyboard.snapshot()
+        if keys is None:
+            keys = {k for k in ('w', 'a', 's', 'd', 'space', 'escape', 'f5', 'c', 'e',
+                                '1', '2', '3', '4', '5', '6', '7', '8', '9') if held_keys[k]}
+            if held_keys['left shift'] or held_keys['right shift'] or held_keys['shift']:
+                keys.add('shift')
+            if held_keys['left control'] or held_keys['right control'] or held_keys['control']:
+                keys.add('ctrl')
+            if held_keys['up arrow']:
+                keys.add('up')
+            if held_keys['down arrow']:
+                keys.add('down')
+            if held_keys['left arrow']:
+                keys.add('left')
+            if held_keys['right arrow']:
+                keys.add('right')
+            if held_keys['enter']:
+                keys.add('enter')
+        just_pressed = keys - self.prev_keys
+        self.prev_keys = keys.copy()
+
+        # --- 鼠标按键（物理轮询，上升沿触发一次操作） ---
+        buttons = self.keyboard.mouse_buttons()
+        if buttons is None:
+            left_down, middle_down, right_down = (bool(mouse.left), bool(mouse.middle),
+                                                  bool(mouse.right))
+        else:
+            left_down, middle_down, right_down = buttons
+        left_click = left_down and not self.prev_left
+        middle_click = middle_down and not self.prev_middle
+        right_click = right_down and not self.prev_right
+        self.prev_left, self.prev_middle, self.prev_right = left_down, middle_down, right_down
+
+        # --- ESC：菜单 / 背包 / 打开菜单 ---
+        if 'escape' in just_pressed:
+            if self.ui.settings_open:
+                self.ui.close_settings()
+            elif self.ui.menu_state['open']:
+                self.ui.close_menu()
+            elif self.ui.inventory_open:
+                self.ui.close_inventory()
+            else:
+                self.ui.open_menu()
+
+        # --- E：背包开关（菜单打开时不响应） ---
+        if 'e' in just_pressed and not self.ui.menu_state['open']:
+            if self.ui.inventory_open:
+                self.ui.close_inventory()
+            else:
+                self.ui.open_inventory()
+
+        if 'f5' in just_pressed:
+            saved = self.save()
+            self.notice = i18n.t('notice.saved' if saved else 'notice.save_failed')
+            self.notice_timer = 1.5
+
+        # --- 定时自动存档 ---
+        self.autosave_timer += raw_dt
+        if self.autosave_timer >= config.AUTOSAVE_INTERVAL:
+            self.autosave_timer = 0.0
+            self.save()
+
+        # --- 菜单 / 设置：暂停游戏，方向键选择、左右调整 ---
+        if self.ui.menu_state['open']:
+            if self.ui.settings_open:
+                if 'up' in just_pressed:
+                    self.ui.settings_index = (
+                        self.ui.settings_index - 1) % len(self.ui.settings_rows)
+                    self.ui.refresh_settings()
+                if 'down' in just_pressed:
+                    self.ui.settings_index = (
+                        self.ui.settings_index + 1) % len(self.ui.settings_rows)
+                    self.ui.refresh_settings()
+                current_key = self.ui.settings_rows[self.ui.settings_index][0]
+                if 'left' in just_pressed:
+                    self.ui.adjust_setting(current_key, -1)
+                if 'right' in just_pressed:
+                    self.ui.adjust_setting(current_key, 1)
+                if 'enter' in just_pressed:
+                    self.ui.adjust_setting(current_key, 1)
+            else:
+                if 'up' in just_pressed:
+                    self.ui.menu_state['index'] = (
+                        self.ui.menu_state['index'] - 1) % len(self.ui.menu_buttons)
+                    self.ui.refresh_menu_highlight()
+                if 'down' in just_pressed:
+                    self.ui.menu_state['index'] = (
+                        self.ui.menu_state['index'] + 1) % len(self.ui.menu_buttons)
+                    self.ui.refresh_menu_highlight()
+                if 'enter' in just_pressed:
+                    self.ui.menu_buttons[self.ui.menu_state['index']].on_click()
+            keys = set()
+            just_pressed = set()
+
+        # --- 背包打开：暂停移动，方向键选择、回车放入快捷栏 ---
+        if self.ui.inventory_open:
+            moved = False
+            if 'left' in just_pressed:
+                self.ui.inv_selected = (self.ui.inv_selected - 1) % len(self.ui.inventory)
+                moved = True
+            if 'right' in just_pressed:
+                self.ui.inv_selected = (self.ui.inv_selected + 1) % len(self.ui.inventory)
+                moved = True
+            if 'up' in just_pressed:
+                self.ui.inv_selected = (
+                    self.ui.inv_selected - config.INVENTORY_COLS) % len(self.ui.inventory)
+                moved = True
+            if 'down' in just_pressed:
+                self.ui.inv_selected = (
+                    self.ui.inv_selected + config.INVENTORY_COLS) % len(self.ui.inventory)
+                moved = True
+            if moved:
+                self.ui.refresh_inventory()
+            if 'enter' in just_pressed:
+                block_id = self.ui.inventory[self.ui.inv_selected]
+                if block_id is not None:
+                    self.ui.hotbar[self.ui.selected_slot] = block_id
+                    self.ui.refresh_hotbar()
+            for i in range(config.HOTBAR_SLOTS):
+                if str(i + 1) in just_pressed:
+                    self.ui.selected_slot = i
+                    self.ui.refresh_hotbar()
+
+            # 鼠标拖拽：点背包格拿起/放下，点快捷栏格放入
+            point = self.keyboard.pointer_ui_position()
+            if point is None:
+                point = (mouse.x, mouse.y)
+            self.ui.handle_inventory_click(point, left_click)
+
+            keys = set()
+            just_pressed = set()
+
+        # --- 数字键 / 滚轮切换快捷栏 ---
+        if not self.ui.menu_state['open'] and not self.ui.inventory_open:
+            for i in range(config.HOTBAR_SLOTS):
+                if str(i + 1) in just_pressed and self.ui.selected_slot != i:
+                    self.ui.selected_slot = i
+                    self.ui.refresh_hotbar()
+            scroll_steps = self.pending_scroll
+            self.pending_scroll = 0
+            if scroll_steps:
+                self.ui.selected_slot = (
+                    self.ui.selected_slot - scroll_steps) % config.HOTBAR_SLOTS
+                self.ui.refresh_hotbar()
+        else:
+            self.pending_scroll = 0   # 菜单/背包里滚轮不生效，丢弃
+
+        # --- 玩家：视角、移动、跳跃、重力、相机 ---
+        self.player.update(keys, just_pressed, dt)
+        if self.player.notice:
+            self.notice = self.player.notice
+            self.notice_timer = 3.0
+            self.player.notice = None
+
+        # --- 准星射线 / 选中框 / 挖掘 / 放置 ---
+        active = not self.ui.menu_state['open'] and not self.ui.inventory_open
+        hit = (self.world.raycast(camera.world_position, camera.forward,
+                                  config.REACH_DISTANCE) if active else None)
+
+        show_selector = hit is not None
+        if self.ui.selector.enabled != show_selector:
+            self.ui.selector.enabled = show_selector
+        if hit is not None:
+            hx, hy, hz = hit[0]
+            self.ui.selector.position = (hx + .5, hy + .5, hz + .5)
+
+        if hit is not None:
+            (hx, hy, hz), normal = hit
+            if middle_click:   # 中键取方块：快捷栏已有就切过去，没有就放进当前格
+                picked = self.world.world_blocks.get((hx, hy, hz))
+                if picked is not None:
+                    if picked in self.ui.hotbar:
+                        self.ui.selected_slot = self.ui.hotbar.index(picked)
+                    else:
+                        self.ui.hotbar[self.ui.selected_slot] = picked
+                    self.ui.refresh_hotbar()
+            if left_click:
+                if self.world.world_blocks.get((hx, hy, hz)) == 'worldbox:bedrock.block':
+                    self.notice, self.notice_timer = i18n.t('notice.bedrock'), 1.5
+                elif self.world.remove_block(hx, hy, hz):
+                    self.world.world_edits[(hx, hy, hz)] = None
+                    self.world.rebuild_around(hx, hz)
+            if right_click and normal != (0, 0, 0):
+                tx, ty, tz = hx + normal[0], hy + normal[1], hz + normal[2]
+                block_id = self.ui.hotbar[self.ui.selected_slot]
+                if (block_id is not None
+                        and 0 <= tx < config.WORLD_SIZE and 0 <= tz < config.WORLD_SIZE
+                        and config.MIN_BLOCK_Y <= ty < config.MAX_BLOCK_Y
+                        and (tx, ty, tz) not in self.world.world_blocks
+                        and not self.player.overlaps(tx, ty, tz)):
+                    self.world.add_block(tx, ty, tz, block_id)
+                    self.world.world_edits[(tx, ty, tz)] = block_id
+                    self.world.rebuild_around(tx, tz)
+
+        if self.ui.crosshair.enabled != active:
+            self.ui.crosshair.enabled = active
+        if self.ui.hotbar_root.enabled == self.ui.menu_state['open']:
+            self.ui.hotbar_root.enabled = not self.ui.menu_state['open']
+
+        # --- 区域化视距剔除 ---
+        view_sq = config.VIEW_DISTANCE * config.VIEW_DISTANCE
+        for (cx, cz), entity in self.world.chunk_meshes.items():
+            center_x = cx * config.CHUNK_SIZE + config.CHUNK_SIZE / 2
+            center_z = cz * config.CHUNK_SIZE + config.CHUNK_SIZE / 2
+            dx = max(abs(center_x - self.player.pos.x) - config.CHUNK_SIZE / 2, 0)
+            dz = max(abs(center_z - self.player.pos.z) - config.CHUNK_SIZE / 2, 0)
+            visible = (dx * dx + dz * dz) <= view_sq
+            if entity.enabled != visible:
+                entity.enabled = visible
+
+        # --- 昼夜更替：0=午夜, 0.25=日出, 0.5=正午, 0.75=日落 ---
+        self.day_time = (self.day_time + raw_dt / config.DAY_LENGTH) % 1.0
+        solar = math.sin((self.day_time - 0.25) * math.tau)
+        daylight = max(0.0, solar)
+        if abs(solar - self.last_solar) > 0.005:
+            self.last_solar = solar
+            # 注意：Entity.color 直接作为 color scale 使用，必须是 0~1 的 rgba
+            block_tint = color.rgba(
+                min(1.0, (0.35 + 0.65 * daylight) * config.BRIGHTNESS),
+                min(1.0, (0.38 + 0.62 * daylight) * config.BRIGHTNESS),
+                min(1.0, (0.55 + 0.45 * daylight) * config.BRIGHTNESS), 1)
+            self.world.set_tint(block_tint)
+            if solar >= 0:      # 日出 → 白天
+                _t = min(1.0, solar * 2.5)
+                _sr, _sg, _sb = 1.0, 0.55 + 0.45 * _t, 0.40 + 0.60 * _t
+            else:               # 日落 → 夜晚
+                _t = min(1.0, -solar * 2.5)
+                _sr = 1.0 + (0.12 - 1.0) * _t
+                _sg = 0.55 + (0.16 - 0.55) * _t
+                _sb = 0.40 + (0.32 - 0.40) * _t
+            _sr = min(1.0, _sr * config.BRIGHTNESS)
+            _sg = min(1.0, _sg * config.BRIGHTNESS)
+            _sb = min(1.0, _sb * config.BRIGHTNESS)
+            self.sky.color = color.rgba(_sr, _sg, _sb, 1)
+            window.color = color.rgba(_sr, _sg, _sb, 1)
+
+        # --- HUD：按间隔刷新，Text setter 每次都会重建文本节点 ---
+        self.hud_timer += raw_dt
+        self.hud_frames += 1
+        if self.notice_timer > 0:
+            self.notice_timer -= raw_dt
+            if self.notice_timer <= 0:
+                self.notice = ''
+        if self.hud_timer >= config.HUD_INTERVAL:
+            if self.ui.menu_state['open']:
+                self.ui.hud.text = i18n.t('hud.menu')
+            elif self.ui.inventory_open:
+                self.ui.hud.text = i18n.t('hud.inventory')
+            else:
+                flags = [i18n.t(key) for key, on in
+                         (('hud.crouch', self.player.crouching),
+                          ('hud.sprint', self.player.sprinting),
+                          ('hud.zoom', self.player.zooming)) if on]
+                flags_text = ('  [' + ' '.join(flags) + ']') if flags else ''
+                block_id = self.ui.hotbar[self.ui.selected_slot]
+                block_name = (i18n.block_name(block_id,
+                                              blocks.BLOCK_NAMES.get(block_id, 'Air'))
+                              if block_id else 'Air')
+                clock = int(self.day_time * 24 * 60) % (24 * 60)
+                self.ui.hud.text = (
+                    f'FPS {int(self.hud_frames / self.hud_timer):3d}   '
+                    f'X {self.player.pos.x:6.1f}  Y {self.player.pos.y:5.2f}  Z {self.player.pos.z:6.1f}   '
+                    f'{i18n.t("hud.eye")} {self.player.current_eye:.2f} m   '
+                    f'{clock // 60:02d}:{clock % 60:02d}{flags_text}   {block_name}'
+                    f'{"  [" + self.notice + "]" if self.notice else ""}'
+                )
+            self.hud_timer = 0.0
+            self.hud_frames = 0
