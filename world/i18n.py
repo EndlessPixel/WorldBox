@@ -84,6 +84,8 @@ TEXTS = {
         'block.stone': '石头',
         'block.cobblestone': '原石',
         'block.bedrock': '基岩',
+        'block.obsidian': '黑曜石',
+        'block.bricks': '红砖',
     },
     'en': {
         'language.name': 'English',
@@ -166,6 +168,8 @@ TEXTS = {
         'block.stone': 'Stone',
         'block.cobblestone': 'Cobblestone',
         'block.bedrock': 'Bedrock',
+        'block.obsidian': 'Obsidian',
+        'block.bricks': 'Bricks',
     },
 }
 

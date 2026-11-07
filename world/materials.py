@@ -40,6 +40,16 @@ SURFACE_FILES = {
         'side': 'bedrock.png',
         'bottom': 'bedrock.png',
     },
+    'worldbox:obsidian.block': {
+        'top': 'obsidian.png',
+        'side': 'obsidian.png',
+        'bottom': 'obsidian.png',
+    },
+    'worldbox:bricks.block': {
+        'top': 'bricks.png',
+        'side': 'bricks.png',
+        'bottom': 'bricks.png',
+    },
 }
 
 
