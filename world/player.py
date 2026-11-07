@@ -43,11 +43,13 @@ class Player:
         camera.rotation_y = self.yaw
 
     def overlaps(self, x, y, z):
-        """判断方块是否与玩家身体重叠，避免把自己封进方块里。"""
-        if x != math.floor(self.pos.x) or z != math.floor(self.pos.z):
+        """判断方块是否与玩家 AABB 身体重叠，避免把自己封进方块里。"""
+        radius = config.PLAYER_RADIUS
+        if not (x < self.pos.x + radius and x + 1 > self.pos.x - radius
+                and z < self.pos.z + radius and z + 1 > self.pos.z - radius):
             return False
         feet = math.floor(self.pos.y + 0.001)
-        head = math.floor(self.pos.y + config.EYE_HEIGHT - 0.001)
+        head = math.floor(self.pos.y + self.current_eye - 0.001)
         return feet <= y <= head
 
     def update(self, keys, just_pressed, dt):
@@ -87,28 +89,42 @@ class Player:
             speed = (config.CROUCH_SPEED if self.crouching
                      else (config.SPRINT_SPEED if self.sprinting else config.WALK_SPEED))
             self.current_speed = speed
-            next_x = max(config.PLAYER_RADIUS,
-                         min(config.WORLD_SIZE - config.PLAYER_RADIUS,
-                             self.pos.x + move.x * speed * dt))
-            next_z = max(config.PLAYER_RADIUS,
-                         min(config.WORLD_SIZE - config.PLAYER_RADIUS,
-                             self.pos.z + move.z * speed * dt))
+            delta_x, delta_z = move.x * speed * dt, move.z * speed * dt
+            # 拆成小步，避免掉帧时一步跨过无支撑区/薄墙（穿模）
+            steps = max(1, math.ceil(max(abs(delta_x), abs(delta_z)) / 0.05))
+            step_x, step_z = delta_x / steps, delta_z / steps
+            for _ in range(steps):
+                next_x = max(config.PLAYER_RADIUS,
+                             min(config.WORLD_SIZE - config.PLAYER_RADIUS,
+                                 self.pos.x + step_x))
+                next_z = max(config.PLAYER_RADIUS,
+                             min(config.WORLD_SIZE - config.PLAYER_RADIUS,
+                                 self.pos.z + step_z))
 
-            # 台阶/阻挡检测：脚部或膝盖格被方块挡住就无法前进；
-            # 1 格台阶（脚部格被挡但膝盖格空着）在自动跳跃开启时真实起跳跨过去
-            fx, fz = math.floor(next_x), math.floor(next_z)
-            feet_cell = math.floor(self.pos.y + 0.001)
-            foot_solid = (fx, feet_cell, fz) in self.world.world_blocks
-            knee_solid = (fx, feet_cell + 1, fz) in self.world.world_blocks
-            if not foot_solid and not knee_solid:
-                self.pos.x, self.pos.z = next_x, next_z
-            elif (self.grounded and not knee_solid
-                  and config.AUTO_JUMP and config.AUTO_JUMP_HEIGHT >= 1.0):
-                self.velocity_y = max(
-                    config.JUMP_SPEED,
-                    math.sqrt(2 * config.GRAVITY * 1.25))
-                self.grounded = False
-                self.pos.x, self.pos.z = next_x, next_z
+                # 台阶/阻挡检测：按玩家 AABB 覆盖的所有列判断脚部/头部格
+                feet_cell = math.floor(self.pos.y + 0.001)
+                foot_solid, head_solid = self.world.body_clearance(
+                    next_x, next_z, feet_cell, config.PLAYER_RADIUS)
+
+                # 潜行（Shift）：脚下 AABB 全部失去支撑时不许迈出去
+                sneak_blocked = False
+                if self.crouching and self.grounded:
+                    next_support = self.world.support_height_at(
+                        next_x, next_z, self.pos.y, config.PLAYER_RADIUS)
+                    sneak_blocked = next_support < self.pos.y - 0.02
+
+                if not foot_solid and not head_solid and not sneak_blocked:
+                    self.pos.x, self.pos.z = next_x, next_z
+                elif (self.grounded and not head_solid and not sneak_blocked
+                      and config.AUTO_JUMP and config.AUTO_JUMP_HEIGHT >= 1.0):
+                    # 1 格台阶：真实抛物线起跳跨过去（不瞬移）
+                    self.velocity_y = max(
+                        config.JUMP_SPEED,
+                        math.sqrt(2 * config.GRAVITY * 1.25))
+                    self.grounded = False
+                    self.pos.x, self.pos.z = next_x, next_z
+                else:
+                    break
 
         # 世界边界：每帧钳制
         self.pos.x = max(config.PLAYER_RADIUS,
@@ -116,14 +132,21 @@ class Player:
         self.pos.z = max(config.PLAYER_RADIUS,
                          min(config.WORLD_SIZE - config.PLAYER_RADIUS, self.pos.z))
 
-        # --- 重力与方块支撑（只认脚部附近的支撑面，钻洞时不会被洞顶吸上去） ---
-        ground_y = self.world.ground_height_at(self.pos.x, self.pos.z, self.pos.y)
-        self.velocity_y -= config.GRAVITY * dt
-        self.pos.y += self.velocity_y * dt
-        if self.pos.y <= ground_y:
-            self.pos.y = ground_y
+        # --- 重力与方块支撑（整个 AABB 足迹，钻洞时不会被洞顶吸上去） ---
+        ground_y = self.world.support_height_at(
+            self.pos.x, self.pos.z, self.pos.y, config.PLAYER_RADIUS)
+        if self.crouching and self.grounded and ground_y < self.pos.y - 0.02:
+            # 潜行时脚下被挖空也保持当前高度，不会掉下去；松开 Shift 恢复重力
             self.velocity_y = 0
-            self.grounded = True
+        else:
+            self.velocity_y -= config.GRAVITY * dt
+            self.pos.y += self.velocity_y * dt
+            if self.pos.y <= ground_y:
+                self.pos.y = ground_y
+                self.velocity_y = 0
+                self.grounded = True
+            else:
+                self.grounded = False
 
         # 掉出世界：低于底限就传送回出生点
         if self.pos.y <= config.FALL_LIMIT_Y:

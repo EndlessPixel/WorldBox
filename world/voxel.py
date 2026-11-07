@@ -8,6 +8,8 @@ from . import config
 from .blocks import BLOCKS, DEFAULT_BLOCK_ID
 from .materials import BlockMaterials
 
+SUPPORT_TOLERANCE = 0.05   # 脚部允许与支撑面相差的高度（米）
+
 # 六个面：邻接方向、4 个顶点偏移、明暗系数
 FACES = (
     (( 0,  1,  0), ((0, 1, 0), (0, 1, 1), (1, 1, 1), (1, 1, 0)), 1.00),  # 顶
@@ -190,12 +192,19 @@ class VoxelWorld:
                 normal = (0, 0, -step_z)
         return None
 
-    def ground_height_at(self, x, z, feet_y=None):
-        """玩家所在列的支撑面高度。
+    @staticmethod
+    def columns(x, z, radius):
+        """玩家 AABB 覆盖到的所有方块列。"""
+        for cx in range(math.floor(x - radius), math.floor(x + radius) + 1):
+            for cz in range(math.floor(z - radius), math.floor(z + radius) + 1):
+                yield cx, cz
 
-        传 feet_y 时只返回不超过脚部 +0.55m 的最高方块顶面，
+    def ground_height_at(self, x, z, feet_y=None):
+        """单列的支撑面高度。
+
+        传 feet_y 时只返回脚部附近（+SUPPORT_TOLERANCE）的方块顶面，
         这样站在悬空方块（如 2 格高的洞顶）下面时不会被吸附到洞顶上；
-        不传时保持旧行为（整列最高方块顶面），供出生点/传送使用。
+        不传时保持旧行为（整列最高方块顶面），供地图/出生点使用。
         """
         ix, iz = math.floor(x), math.floor(z)
         if feet_y is None:
@@ -203,9 +212,33 @@ class VoxelWorld:
                 if (ix, y, iz) in self.world_blocks:
                     return y + 1
             return config.FALL_LIMIT_Y
-        tolerance = 0.55
-        top = min(config.MAX_BLOCK_Y - 1, math.floor(feet_y + tolerance))
+        top = min(config.MAX_BLOCK_Y - 1,
+                  math.floor(feet_y + SUPPORT_TOLERANCE))
         for y in range(top, config.MIN_BLOCK_Y - 1, -1):
-            if (ix, y, iz) in self.world_blocks and y + 1 <= feet_y + tolerance:
+            if (ix, y, iz) in self.world_blocks and y + 1 <= feet_y + SUPPORT_TOLERANCE:
                 return y + 1
         return config.FALL_LIMIT_Y
+
+    def support_height_at(self, x, z, feet_y, radius):
+        """玩家碰撞体积（AABB）覆盖的所有列里的最高支撑面。
+
+        任意一角还压在方块上就算有支撑，避免中心点刚离开方块就穿模下坠。
+        """
+        if radius <= 0:
+            return self.ground_height_at(x, z, feet_y)
+        best = config.FALL_LIMIT_Y
+        for cx, cz in self.columns(x, z, radius):
+            height = self.ground_height_at(cx + .5, cz + .5, feet_y)
+            if height > best:
+                best = height
+        return best
+
+    def body_clearance(self, x, z, feet_cell, radius):
+        """AABB 范围内脚部/头部两格是否被方块占据，返回 (脚, 头)。"""
+        foot = head = False
+        for cx, cz in self.columns(x, z, radius):
+            foot = foot or (cx, feet_cell, cz) in self.world_blocks
+            head = head or (cx, feet_cell + 1, cz) in self.world_blocks
+            if foot and head:
+                break
+        return foot, head
