@@ -39,6 +39,20 @@ window.title = 'WorldBox'
 window.color = color.rgb(145, 200, 240)
 window.exit_button.enabled = False   # 右上角开发模式的 X 按钮用不上，隐藏
 
+if '--smoke' in sys.argv:
+    # 打包自检：只初始化一次游戏，把结果写文件（windowed 模式没有控制台输出）
+    import traceback
+    try:
+        game = Game()
+        result = 'OK'
+    except Exception:
+        result = 'FAIL\n' + traceback.format_exc()
+    try:
+        (config.ROOT_DIR / 'smoke_result.txt').write_text(result, encoding='utf-8')
+    except OSError:
+        pass
+    sys.exit(0 if result == 'OK' else 1)
+
 game = Game()
 
 
