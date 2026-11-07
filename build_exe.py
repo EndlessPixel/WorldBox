@@ -29,20 +29,20 @@ def main():
     args = ap.parse_args()
 
     if sys.platform != 'win32':
-        print('× Windows exe 只能在 Windows 上构建（PyInstaller 不支持交叉编译）。')
-        print('  请推送到 GitHub，让 "Build Windows EXE" 工作流自动构建并上传产物。')
+        print('[X] Windows exe must be built on Windows (PyInstaller has no cross-compile).')
+        print('    Push to GitHub and use the "Build Windows EXE" workflow.')
         return 2
     try:
         import PyInstaller  # noqa: F401
     except ImportError:
-        print('× 缺少 PyInstaller：pip install -r requirements-build.txt')
+        print('[X] Missing PyInstaller: pip install -r requirements-build.txt')
         return 2
 
     fonts = [p for p in (ROOT / 'assets' / 'fonts').glob('Noto*.*')
              if p.suffix.lower() in ('.ttc', '.otf', '.ttf')]
     if not fonts:
-        print('! 未找到中文字体，exe 的中文文本会退化为 ASCII。')
-        print('  CI 会自动下载 OFL 授权的 Noto Sans SC。')
+        print('[!] CJK font not found; Chinese text will fall back to ASCII.')
+        print('    CI downloads the OFL-licensed Noto Sans SC automatically.')
 
     cmd = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean',
            '--onefile' if args.onefile else '--onedir',
@@ -66,8 +66,8 @@ def main():
     print('>', ' '.join(cmd))
     result = subprocess.call(cmd, cwd=ROOT)
     if result == 0:
-        print('\n✓ 构建完成：dist/WorldBox/WorldBox.exe')
-        print('  整个 dist/WorldBox/ 目录一起分发，字体、配置与存档都在该目录。')
+        print('\n[OK] Build complete: dist/WorldBox/WorldBox.exe')
+        print('     Ship the whole dist/WorldBox/ folder (fonts, config and saves live there).')
     return result
 
 

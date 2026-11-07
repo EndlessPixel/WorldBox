@@ -10,6 +10,21 @@
 安装：pip install ursina
 """
 
+import os
+import sys
+
+# 打包成 exe 后可能是 cp1252 控制台或无 stdout，中文日志会让 print 抛编码错误
+if getattr(sys, 'frozen', False):
+    for _stream_name in ('stdout', 'stderr'):
+        _stream = getattr(sys, _stream_name, None)
+        if _stream is None:
+            setattr(sys, _stream_name, open(os.devnull, 'w', encoding='utf-8'))
+        elif hasattr(_stream, 'reconfigure'):
+            try:
+                _stream.reconfigure(encoding='utf-8', errors='replace')
+            except (OSError, ValueError, AttributeError):
+                pass
+
 from ursina import Ursina, application, color, window
 
 from world import config
