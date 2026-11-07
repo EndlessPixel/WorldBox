@@ -9,6 +9,7 @@
 - 天空盒 + 昼夜更替（日出日落偏橙，夜晚整体变暗）
 - WASD 移动 / Ctrl 疾跑 / 空格跳跃 / Shift 蹲下 / C 放大 / 鼠标转视角
 - ESC 暂停菜单（继续 / 存档 / 保存并退出）；F5 存档
+- 同目录 setting.json 可配置：自动跳跃/高度、视距、FOV、视角晃动、亮度
 - 存档：同目录 world_save.json（玩家状态、方块改动、快捷栏）
 
 安装：pip install ursina
@@ -21,13 +22,74 @@ import ctypes
 import json
 import math
 
+# ---------- 用户设置（同目录 setting.json） ----------
+SETTINGS_FILE = Path(__file__).resolve().with_name('setting.json')
+DEFAULT_SETTINGS = {
+    'auto_jump': True,          # 是否自动跳上台阶
+    'auto_jump_height': 1.0,    # 自动跳跃能跨过的高度（格）
+    'view_distance': 96,        # 视距（米）
+    'fov': 40,                  # 基础视场角
+    'view_bob': 0.03,           # 移动时视角晃动幅度（米）
+    'brightness': 1.0,          # 画面亮度（0.3 ~ 2.0）
+}
+
+
+def _cfg_number(value, default, low, high):
+    """配置数值校验：拒绝非法值并钳制范围。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return max(low, min(high, number))
+
+
+def load_settings():
+    settings = dict(DEFAULT_SETTINGS)
+    try:
+        with SETTINGS_FILE.open(encoding='utf-8') as f:
+            raw = json.load(f)
+    except (OSError, ValueError, TypeError):
+        print('[设置] 没有可用的 setting.json，使用默认设置')
+        return settings
+    if not isinstance(raw, dict):
+        print('[设置] setting.json 格式不正确，使用默认设置')
+        return settings
+    if isinstance(raw.get('auto_jump'), bool):
+        settings['auto_jump'] = raw['auto_jump']
+    settings['auto_jump_height'] = _cfg_number(raw.get('auto_jump_height'), 1.0, 0.5, 2.0)
+    settings['view_distance'] = _cfg_number(raw.get('view_distance'), 96, 16, 256)
+    settings['fov'] = _cfg_number(raw.get('fov'), 40, 20, 120)
+    settings['view_bob'] = _cfg_number(raw.get('view_bob'), 0.03, 0.0, 0.2)
+    settings['brightness'] = _cfg_number(raw.get('brightness'), 1.0, 0.3, 2.0)
+    print('[设置] ' + ', '.join(f'{k}={v}' for k, v in settings.items()))
+    return settings
+
+
+SETTINGS = load_settings()
+
 # ================= 可调参数 =================
 WORLD_SIZE        = 128     # 世界边长（米）
 CHUNK_SIZE        = 16      # 每个区块边长（米）
-VIEW_DISTANCE     = 96      # 区块可见距离（米）
+VIEW_DISTANCE     = SETTINGS['view_distance']     # 区块可见距离（米）
+AUTO_JUMP         = SETTINGS['auto_jump']         # 自动跳上台阶
+AUTO_JUMP_HEIGHT  = SETTINGS['auto_jump_height']  # 自动跳跃能跨过的高度（格）
+BASE_FOV          = SETTINGS['fov']               # 基础视场角
+VIEW_BOB          = SETTINGS['view_bob']          # 移动时视角晃动幅度（米）
+BRIGHTNESS        = SETTINGS['brightness']        # 画面亮度
 
-MIN_BLOCK_Y       = -1      # 地表层（方块顶面在 y=0）
+# 世界分层（从最底层往上）：基岩 1 层、石头 3 层、泥土 2 层、草 1 层
+WORLD_LAYERS      = (
+    ('worldbox:bedrock.block', 1),
+    ('worldbox:stone.block', 3),
+    ('worldbox:dirt.block', 2),
+    ('worldbox:grass.block', 1),
+)
+WORLD_DEPTH       = sum(count for _, count in WORLD_LAYERS)
+MIN_BLOCK_Y       = -WORLD_DEPTH   # 最底层 y=-7，顶层草方块顶面仍在 y=0
 MAX_BLOCK_Y       = 16      # 可放置高度上限（不含）
+FALL_LIMIT_Y      = MIN_BLOCK_Y - 10   # 掉到这个高度以下传送回出生点
 REACH_DISTANCE    = 6.0     # 挖掘/放置距离（米）
 
 EYE_HEIGHT        = 1.75    # 站立眼高（米）
@@ -35,7 +97,7 @@ CROUCH_EYE_HEIGHT = 1.00    # 蹲下眼高（米）
 WALK_SPEED        = 6.0     # 走路速度 m/s
 SPRINT_SPEED      = 9.5     # 疾跑速度 m/s（按住 Ctrl）
 CROUCH_SPEED      = 2.5     # 蹲行速度 m/s
-ZOOM_FOV          = 15      # C 键放大时的视场角（Ursina 默认 40，越小放大越多）
+ZOOM_FOV          = min(15, BASE_FOV * 0.6)   # C 键放大时的视场角
 FOV_LERP_SPEED    = 10      # 变焦过渡速度
 GRAVITY           = 25.0    # 重力 m/s^2
 JUMP_SPEED        = 8.0     # 起跳速度 m/s
@@ -180,10 +242,16 @@ def remove_block(x, y, z):
     return True
 
 
-# 初始铺一层草地
+# 初始世界分层填充（顶层草方块顶面正好落在 y=0）
+_layer_block_ids = []
+for _layer_id, _layer_count in WORLD_LAYERS:
+    _layer_block_ids.extend(
+        [_layer_id if _layer_id in BLOCKS else DEFAULT_BLOCK_ID] * _layer_count)
+
 for _x in range(WORLD_SIZE):
     for _z in range(WORLD_SIZE):
-        add_block(_x, MIN_BLOCK_Y, _z, DEFAULT_BLOCK_ID)
+        for _offset, _layer_id in enumerate(_layer_block_ids):
+            add_block(_x, MIN_BLOCK_Y + _offset, _z, _layer_id)
 
 # 应用存档里的方块改动（坐标与 ID 都校验，损坏条目直接跳过）
 if save_data:
@@ -207,27 +275,6 @@ if save_data:
 
 
 # ---------- 键盘 / 鼠标状态 ----------
-class XButtonEvent(ctypes.Structure):
-    """X11 的 XButtonEvent，用于从事件队列里读滚轮（Button4/5）。"""
-    _fields_ = [
-        ('type', ctypes.c_int),
-        ('serial', ctypes.c_ulong),
-        ('send_event', ctypes.c_int),
-        ('display', ctypes.c_void_p),
-        ('window', ctypes.c_ulong),
-        ('root', ctypes.c_ulong),
-        ('subwindow', ctypes.c_ulong),
-        ('time', ctypes.c_ulong),
-        ('x', ctypes.c_int),
-        ('y', ctypes.c_int),
-        ('x_root', ctypes.c_int),
-        ('y_root', ctypes.c_int),
-        ('state', ctypes.c_uint),
-        ('button', ctypes.c_uint),
-        ('same_screen', ctypes.c_int),
-    ]
-
-
 class PhysicalKeys:
     """优先轮询 X11 的真实输入状态。
 
@@ -254,7 +301,6 @@ class PhysicalKeys:
     BUTTON1_MASK = 1 << 8      # 鼠标左键
     BUTTON2_MASK = 1 << 9      # 鼠标中键
     BUTTON3_MASK = 1 << 10     # 鼠标右键
-    BUTTON_PRESS_MASK = 1 << 2 # X11 ButtonPressMask，用于接收滚轮事件
 
     def __init__(self):
         self._x11 = None
@@ -285,12 +331,6 @@ class PhysicalKeys:
             ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
             ctypes.POINTER(ctypes.c_uint),
         ]
-        x11.XSelectInput.restype = ctypes.c_int
-        x11.XSelectInput.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_long]
-        x11.XEventsQueued.restype = ctypes.c_int
-        x11.XEventsQueued.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        x11.XNextEvent.restype = ctypes.c_int
-        x11.XNextEvent.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         display = x11.XOpenDisplay(None)
         if not display:
             return
@@ -298,16 +338,16 @@ class PhysicalKeys:
         self._x11 = x11
         self._display = display
         self._root = x11.XDefaultRootWindow(display)
+        try:
+            self._window_id = application.base.win.get_window_handle().get_int_handle()
+        except Exception:
+            self._window_id = self._root
         self._keymap = (ctypes.c_ubyte * 32)()
         self._keymap_ptr = ctypes.cast(self._keymap, ctypes.POINTER(ctypes.c_ubyte))
         self._keycodes = {
             name: x11.XKeysymToKeycode(display, keysym)
             for name, keysym in self.KEYSYMS.items()
         }
-        self._event_buffer = ctypes.create_string_buffer(256)
-        # 只在这条独立 X11 连接上监听 ButtonPress（滚轮），不影响 Panda3D 自己的事件
-        x11.XSelectInput(display, self._root, self.BUTTON_PRESS_MASK)
-
     def snapshot(self):
         """返回当前按下的键名集合；X11 不可用时返回 None 以启用回退。"""
         if self._x11 is None or not self._x11.XQueryKeymap(self._display, self._keymap_ptr):
@@ -319,10 +359,6 @@ class PhysicalKeys:
             if self._keymap[code // 8] & (1 << (code % 8)):
                 pressed.add(self.ALIASES.get(name, name))
         return pressed
-
-    @property
-    def available(self):
-        return self._x11 is not None
 
     def mouse_buttons(self):
         """返回 (左键, 中键, 右键) 的按住状态；X11 不可用时返回 None。"""
@@ -348,26 +384,39 @@ class PhysicalKeys:
                 bool(mask.value & self.BUTTON2_MASK),
                 bool(mask.value & self.BUTTON3_MASK))
 
-    def poll_scroll(self):
-        """返回滚轮步数：+1 上滚、-1 下滚、0 无；X11 不可用时返回 0。"""
-        if self._x11 is None:
-            return 0
-        steps = 0
-        # QueuedAfterReading：把 server 端已到达的事件读进本地队列，不阻塞
-        while self._x11.XEventsQueued(self._display, 1) > 0:
-            self._x11.XNextEvent(self._display, ctypes.byref(self._event_buffer))
-            event = ctypes.cast(self._event_buffer, ctypes.POINTER(XButtonEvent)).contents
-            if event.type == 4:          # ButtonPress
-                if event.button == 4:    # 滚轮上
-                    steps += 1
-                elif event.button == 5:  # 滚轮下
-                    steps -= 1
-        return steps
+    def pointer_ui_position(self):
+        """返回鼠标在 UI 坐标里的位置（x ∈ ±aspect/2，y ∈ ±0.5）；不可用时返回 None。"""
+        if self._x11 is None or not self._window_id:
+            return None
+        root_return = ctypes.c_ulong()
+        child_return = ctypes.c_ulong()
+        root_x = ctypes.c_int()
+        root_y = ctypes.c_int()
+        win_x = ctypes.c_int()
+        win_y = ctypes.c_int()
+        mask = ctypes.c_uint()
+        ok = self._x11.XQueryPointer(
+            self._display, self._window_id,
+            ctypes.byref(root_return), ctypes.byref(child_return),
+            ctypes.byref(root_x), ctypes.byref(root_y),
+            ctypes.byref(win_x), ctypes.byref(win_y),
+            ctypes.byref(mask),
+        )
+        if not ok:
+            return None
+        window = application.base.win
+        width, height = window.get_x_size(), window.get_y_size()
+        if width <= 0 or height <= 0:
+            return None
+        aspect = width / height
+        return ((win_x.value / width - 0.5) * aspect,
+                0.5 - win_y.value / height)
 
 
 app = Ursina()
 window.title = '3D World  |  128 x 128'
 window.color = color.rgb(145, 200, 240)
+window.exit_button.enabled = False   # 右上角开发模式的 X 按钮用不上，隐藏
 keyboard = PhysicalKeys()
 
 # ---------- 天空盒（跟随相机，昼夜通过 color 乘色实现） ----------
@@ -490,12 +539,12 @@ def voxel_raycast(origin, direction, max_distance):
 
 
 def ground_height_at(x, z):
-    """玩家所在列最高的方块顶面（至少为 0，挖掉地表也不会掉进虚空）。"""
+    """玩家所在列最高的方块顶面；该列被挖空时返回世界底限，让玩家继续下落。"""
     ix, iz = math.floor(x), math.floor(z)
     for y in range(MAX_BLOCK_Y - 1, MIN_BLOCK_Y - 1, -1):
         if (ix, y, iz) in world_blocks:
-            return max(0.0, y + 1)
-    return 0.0
+            return y + 1
+    return FALL_LIMIT_Y
 
 
 def player_overlaps(x, y, z):
@@ -524,8 +573,11 @@ pending_scroll = 0
 notice      = 'LMB dig / RMB place / MMB pick / wheel hotbar / E inventory'
 notice_timer = 10.0
 autosave_timer = 0.0
-current_fov = camera.fov
-default_fov = camera.fov
+default_fov = BASE_FOV
+current_fov = BASE_FOV
+camera.fov = BASE_FOV
+bob_phase = 0.0     # 视角晃动相位
+bob_amount = 0.0    # 视角晃动强度（0~1）
 menu_state  = {'open': False, 'index': 0}
 day_time     = START_DAY_TIME
 last_solar   = -2.0   # 用太阳高度角判断是否需要刷新天色（daylight 在黄昏和夜晚都为 0）
@@ -537,6 +589,7 @@ inventory = [BLOCK_IDS[i] if i < len(BLOCK_IDS) else None
 selected_slot = 0
 inv_selected = 0
 inventory_open = False
+held_item = None   # 背包里被"拿在鼠标上"的方块 ID
 
 if save_data:
     player_pos.x = _save_number(save_data.get('x'), player_pos.x, PLAYER_RADIUS, WORLD_SIZE - PLAYER_RADIUS)
@@ -610,7 +663,7 @@ inventory_root = Entity(parent=camera.ui, enabled=False)
 Entity(parent=inventory_root, model='quad', color=color.black66, scale=(3, 2), z=0)
 Text(parent=inventory_root, text='INVENTORY', origin=(0, 0), y=.34, scale=1.5, z=-.02)
 Text(parent=inventory_root,
-     text='ARROWS select / ENTER put into hotbar / 1-9 slot / E close',
+     text='CLICK item to pick up / CLICK hotbar slot to place / E close',
      origin=(0, 0), y=-.35, scale=.6, color=color.gray, z=-.02)
 
 inventory_ui = []
@@ -633,6 +686,26 @@ def refresh_inventory():
         bg.color = color.white if i == inv_selected else color.black90
 
 
+# 跟随鼠标的"拿在手上"方块图标
+held_icon = Entity(parent=camera.ui, model='quad', color=color.white,
+                   scale=(SLOT_SIZE * .72, SLOT_SIZE * .72), enabled=False, z=-3)
+
+
+def slot_index_at(px, py, cols, rows, center_y):
+    """判断 UI 坐标落在哪个格子上；返回格子索引，未命中返回 None。"""
+    step = SLOT_SIZE + SLOT_GAP
+    half = SLOT_SIZE / 2
+    col = round(px / step + (cols - 1) / 2)
+    row = round((center_y - py) / step)
+    if not (0 <= col < cols and 0 <= row < rows):
+        return None
+    slot_x = (col - (cols - 1) / 2) * step
+    slot_y = center_y - row * step
+    if abs(px - slot_x) <= half and abs(py - slot_y) <= half:
+        return row * cols + col
+    return None
+
+
 def open_inventory():
     global inventory_open
     inventory_open = True
@@ -642,9 +715,17 @@ def open_inventory():
 
 
 def close_inventory():
-    global inventory_open
+    global inventory_open, held_item
+    if held_item is not None:      # 关背包时把手上物品放回空位，避免丢失
+        for i in range(len(inventory)):
+            if inventory[i] is None:
+                inventory[i] = held_item
+                break
+        held_item = None
+        held_icon.enabled = False
     inventory_open = False
     inventory_root.enabled = False
+    refresh_inventory()
     mouse.locked = True
 
 
@@ -661,10 +742,8 @@ menu_labels = ('Resume', 'Save', 'Save & Quit')
 
 
 def open_menu():
-    global inventory_open
-    if inventory_open:            # 菜单优先，先收起背包
-        inventory_open = False
-        inventory_root.enabled = False
+    if inventory_open:            # 菜单优先，先收起背包（顺手回收手上物品）
+        close_inventory()
     menu_state['open'] = True
     menu_state['index'] = 0
     menu_status.text = ''
@@ -702,11 +781,13 @@ def refresh_menu_highlight():
 # ---------- 方块选中指示器 ----------
 selector = Entity(model='wireframe_cube', color=color.white, scale=1.004, enabled=False)
 
-# ---------- 输入：窗口点击重新锁定鼠标 / 滚轮回退 ----------
+# ---------- 输入：滚轮 / 窗口点击重新锁定鼠标 ----------
 def input(key):
     global pending_scroll
-    if key in ('scroll up', 'scroll down') and not keyboard.available:
-        pending_scroll += 1 if key == 'scroll up' else -1
+    if key == 'scroll up':
+        pending_scroll += 1
+    elif key == 'scroll down':
+        pending_scroll -= 1
     if key == 'left mouse down' and not menu_state['open'] and not inventory_open and not mouse.locked:
         mouse.locked = True
 
@@ -715,8 +796,8 @@ def input(key):
 def update():
     global velocity_y, grounded, current_eye, yaw, pitch
     global hud_timer, hud_frames, prev_keys, notice, notice_timer, autosave_timer, current_fov
-    global prev_left, prev_middle, prev_right, selected_slot, inv_selected
-    global pending_scroll, day_time, last_solar, block_tint
+    global prev_left, prev_middle, prev_right, selected_slot, inv_selected, held_item
+    global pending_scroll, day_time, last_solar, block_tint, bob_phase, bob_amount
 
     raw_dt = time.dt
     if raw_dt <= 0:
@@ -820,6 +901,43 @@ def update():
             if str(_i + 1) in just_pressed:
                 selected_slot = _i
                 refresh_hotbar()
+
+        # 鼠标拖拽：点背包格拿起/放下，点快捷栏格放入
+        point = keyboard.pointer_ui_position()
+        if point is None:
+            point = (mouse.x, mouse.y)
+        if left_click and point is not None:
+            px, py = point
+            inv_idx = slot_index_at(px, py, INVENTORY_COLS, INVENTORY_ROWS, .12)
+            hot_idx = slot_index_at(px, py, HOTBAR_SLOTS, 1, -.44)
+            if inv_idx is not None:
+                item = inventory[inv_idx]
+                if held_item is None:
+                    if item is not None:
+                        held_item = item
+                        inventory[inv_idx] = None
+                else:
+                    inventory[inv_idx] = held_item
+                    held_item = item
+                refresh_inventory()
+            elif hot_idx is not None:
+                item = hotbar[hot_idx]
+                if held_item is not None:
+                    hotbar[hot_idx] = held_item
+                    held_item = item
+                    selected_slot = hot_idx
+                else:
+                    selected_slot = hot_idx
+                refresh_hotbar()
+
+        # 手上的方块跟随鼠标
+        if held_item is not None and point is not None:
+            held_icon.position = (point[0], point[1], -3)
+            held_icon.color = slot_color(held_item)
+            held_icon.enabled = True
+        else:
+            held_icon.enabled = False
+
         keys = set()
         just_pressed = set()
 
@@ -829,14 +947,13 @@ def update():
             if str(_i + 1) in just_pressed and selected_slot != _i:
                 selected_slot = _i
                 refresh_hotbar()
-        scroll_steps = keyboard.poll_scroll() + pending_scroll
+        scroll_steps = pending_scroll
         pending_scroll = 0
         if scroll_steps:
             selected_slot = (selected_slot - scroll_steps) % HOTBAR_SLOTS
             refresh_hotbar()
     else:
-        keyboard.poll_scroll()   # 菜单/背包里也消费掉滚轮事件，避免关闭后一次性触发
-        pending_scroll = 0
+        pending_scroll = 0   # 菜单/背包里滚轮不生效，丢弃
 
     # --- 鼠标视角 ---
     if mouse.locked:
@@ -864,6 +981,7 @@ def update():
     # --- 水平移动（基于朝向） ---
     fwd  = int('w' in keys) - int('s' in keys)
     side = int('d' in keys) - int('a' in keys)
+    current_speed = 0.0
 
     if fwd or side:
         yr      = math.radians(yaw)
@@ -873,11 +991,25 @@ def update():
 
         # 蹲行优先于疾跑，避免同时按住 Shift+Ctrl 时互相打架
         speed = CROUCH_SPEED if crouching else (SPRINT_SPEED if sprinting else WALK_SPEED)
-        player_pos.x += move.x * speed * dt
-        player_pos.z += move.z * speed * dt
+        current_speed = speed
+        next_x = max(PLAYER_RADIUS, min(WORLD_SIZE - PLAYER_RADIUS,
+                                        player_pos.x + move.x * speed * dt))
+        next_z = max(PLAYER_RADIUS, min(WORLD_SIZE - PLAYER_RADIUS,
+                                        player_pos.z + move.z * speed * dt))
 
-        player_pos.x = max(PLAYER_RADIUS, min(WORLD_SIZE - PLAYER_RADIUS, player_pos.x))
-        player_pos.z = max(PLAYER_RADIUS, min(WORLD_SIZE - PLAYER_RADIUS, player_pos.z))
+        # 台阶检测：1 格台阶自动跳上去，超过配置高度的方块直接挡住（不再瞬移）
+        step_up = ground_height_at(next_x, next_z) - player_pos.y
+        if step_up <= 0.01:
+            player_pos.x, player_pos.z = next_x, next_z
+        elif grounded and step_up <= AUTO_JUMP_HEIGHT + 0.01 and AUTO_JUMP:
+            # 按台阶高度给足起跳速度，让玩家沿抛物线跳上去，有完整的跳跃过程
+            velocity_y = max(JUMP_SPEED, math.sqrt(2 * GRAVITY * (step_up + 0.25)))
+            grounded = False
+            player_pos.x, player_pos.z = next_x, next_z
+
+    # 世界边界：每帧钳制，任何方式都不会走出世界
+    player_pos.x = max(PLAYER_RADIUS, min(WORLD_SIZE - PLAYER_RADIUS, player_pos.x))
+    player_pos.z = max(PLAYER_RADIUS, min(WORLD_SIZE - PLAYER_RADIUS, player_pos.z))
 
     # --- 重力与方块支撑（站到放置的方块上） ---
     ground_y = ground_height_at(player_pos.x, player_pos.z)
@@ -888,11 +1020,33 @@ def update():
         velocity_y   = 0
         grounded     = True
 
+    # 掉出世界：低于底限就传送回出生点
+    if player_pos.y <= FALL_LIMIT_Y:
+        player_pos.x = WORLD_SIZE / 2
+        player_pos.z = WORLD_SIZE / 2
+        spawn_ground = ground_height_at(player_pos.x, player_pos.z)
+        player_pos.y = max(0.0, spawn_ground) + 0.05
+        velocity_y = 0
+        grounded = True
+        notice, notice_timer = 'FELL OUT OF WORLD - TELEPORTED TO SPAWN', 3.0
+
     # --- 眼高平滑过渡 ---
     target_eye = CROUCH_EYE_HEIGHT if crouching else EYE_HEIGHT
     current_eye += (target_eye - current_eye) * min(1.0, dt * EYE_LERP_SPEED)
 
-    camera.position = player_pos + Vec3(0, current_eye, 0)
+    # --- 移动时的视角晃动（view_bob 可配置，0 关闭） ---
+    moving = bool(fwd or side) and grounded
+    bob_amount += ((1.0 if moving else 0.0) - bob_amount) * min(1.0, dt * 8)
+    if moving and current_speed > 0:
+        bob_phase += dt * 9.0 * (current_speed / WALK_SPEED)
+    bob_y = math.sin(bob_phase) * VIEW_BOB * bob_amount
+    bob_x = math.sin(bob_phase * 0.5) * VIEW_BOB * 0.4 * bob_amount
+    yr = math.radians(yaw)
+    camera.position = player_pos + Vec3(
+        math.cos(yr) * bob_x,
+        current_eye + bob_y,
+        -math.sin(yr) * bob_x,
+    )
 
     # --- 准星射线 / 选中框 / 挖掘 / 放置 ---
     active = not menu_state['open'] and not inventory_open
@@ -916,7 +1070,9 @@ def update():
                     hotbar[selected_slot] = picked
                 refresh_hotbar()
         if left_click:
-            if remove_block(hx, hy, hz):
+            if world_blocks.get((hx, hy, hz)) == 'worldbox:bedrock.block':
+                notice, notice_timer = 'BEDROCK - unbreakable', 1.5
+            elif remove_block(hx, hy, hz):
                 world_edits[(hx, hy, hz)] = None
                 rebuild_around(hx, hz)
         if right_click and normal != (0, 0, 0):
@@ -954,9 +1110,10 @@ def update():
     if abs(solar - last_solar) > 0.005:
         last_solar = solar
         # 注意：Entity.color 直接作为 color scale 使用，必须是 0~1 的 rgba
-        block_tint = color.rgba(0.35 + 0.65 * daylight,
-                                0.38 + 0.62 * daylight,
-                                0.55 + 0.45 * daylight, 1)
+        block_tint = color.rgba(
+            min(1.0, (0.35 + 0.65 * daylight) * BRIGHTNESS),
+            min(1.0, (0.38 + 0.62 * daylight) * BRIGHTNESS),
+            min(1.0, (0.55 + 0.45 * daylight) * BRIGHTNESS), 1)
         for _entity in chunk_meshes.values():
             _entity.color = block_tint
         if solar >= 0:      # 日出 → 白天
@@ -967,6 +1124,9 @@ def update():
             _sr = 1.0 + (0.12 - 1.0) * _t
             _sg = 0.55 + (0.16 - 0.55) * _t
             _sb = 0.40 + (0.32 - 0.40) * _t
+        _sr = min(1.0, _sr * BRIGHTNESS)
+        _sg = min(1.0, _sg * BRIGHTNESS)
+        _sb = min(1.0, _sb * BRIGHTNESS)
         sky.color = color.rgba(_sr, _sg, _sb, 1)
         window.color = color.rgba(_sr, _sg, _sb, 1)
 
