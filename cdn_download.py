@@ -186,8 +186,15 @@ def download_one(url: str, dest: str, root: Path, force: bool,
         return False
 
     if target.exists() and not force:
-        say(f"  ↷ 已存在，跳过 ({fmt_size(target.stat().st_size)})")
-        return True
+        try:
+            with open(target, "rb") as f:
+                head = f.read(8)
+        except OSError:
+            head = b""
+        if head.startswith(b"\x89PNG\r\n\x1a\n"):
+            say(f"  ↷ 已存在，跳过 ({fmt_size(target.stat().st_size)})")
+            return True
+        say("  ! 已存在但不是 PNG，重新下载")
 
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(target.name + ".part")
@@ -217,6 +224,11 @@ def download_one(url: str, dest: str, root: Path, force: bool,
                             sys.stdout.flush()
             if log:
                 sys.stdout.write("\r" + " " * 60 + "\r")
+            # 有些域名会返回 HTML 错误页，扩展名却是 .png；校验 PNG 魔数避免写入坏纹理
+            with open(tmp, "rb") as f:
+                head = f.read(8)
+            if not head.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("下载内容不是 PNG（可能是 HTML 错误页）")
             tmp.replace(target)
             say(f"  ✓ 完成 → {dest}  ({fmt_size(target.stat().st_size)})")
             return True
