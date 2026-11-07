@@ -112,8 +112,10 @@ def run(*args):
 
 def build():
     for command in ('create', 'build', 'package'):
+        # --no-docker：CI 本身就是 Linux，用宿主机 Python 装依赖，
+        # 避免官方 Docker 镜像里缺少 /usr/bin/python3.12 的问题
         if run(sys.executable, '-m', 'briefcase', command,
-               'linux', 'appimage', '--no-input') != 0:
+               'linux', 'appimage', '--no-input', '--no-docker') != 0:
             print('[X] briefcase', command, 'failed')
             return 1
     target = DIST / f'WorldBox-{version()}-linux-x86_64.AppImage'
