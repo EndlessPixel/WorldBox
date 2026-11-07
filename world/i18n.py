@@ -86,6 +86,7 @@ TEXTS = {
         'block.bedrock': '基岩',
         'block.obsidian': '黑曜石',
         'block.bricks': '红砖',
+        'block.end_stone': '末地石',
     },
     'en': {
         'language.name': 'English',
@@ -170,6 +171,7 @@ TEXTS = {
         'block.bedrock': 'Bedrock',
         'block.obsidian': 'Obsidian',
         'block.bricks': 'Bricks',
+        'block.end_stone': 'End Stone',
     },
 }
 

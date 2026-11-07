@@ -13,7 +13,8 @@ DEFAULT_BLOCKS = (
     {'id': 'worldbox:cobblestone.block','name': 'Cobblestone','color': [100, 100, 100]},
     {"id": 'worldbox:bedrock.block',    'name': 'Bedrock',    'color': [90, 90, 90]   },
     {'id': 'worldbox:obsidian.block',   'name': 'Obsidian',   'color': (26, 22, 38)   },
-    {'id': 'worldbox:bricks.block',     'name': 'Bricks',     'color': (156, 83, 62)  }
+    {'id': 'worldbox:bricks.block',     'name': 'Bricks',     'color': (156, 83, 62)  },
+    {'id': 'worldbox:end_stone.block',  'name': 'End Stone',  'color': (219, 213, 161)}
 )
 
 

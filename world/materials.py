@@ -50,6 +50,11 @@ SURFACE_FILES = {
         'side': 'bricks.png',
         'bottom': 'bricks.png',
     },
+    'worldbox:end_stone.block': {
+        'top': 'end_stone.png',
+        'side': 'end_stone.png',
+        'bottom': 'end_stone.png',
+    },
 }
 
 

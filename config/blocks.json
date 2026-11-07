@@ -33,5 +33,10 @@
     "id": "worldbox:bricks.block",
     "name": "Bricks",
     "color": [156, 83, 62]
+  },
+  {
+    "id": "worldbox:end_stone.block",
+    "name": "End Stone",
+    "color": [219, 213, 161]
   }
 ]
