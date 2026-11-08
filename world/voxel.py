@@ -110,6 +110,30 @@ class VoxelWorld:
                 return segment
         return None
 
+    def solid_run(self, x, y, z, hit_y):
+        """命中高度所在的连续实体区间 (low, high)；没有则 None。
+
+        两半砖组成整格时返回整格 [y, y+1]，供选择框按实际占据范围显示。
+        """
+        segments = self.segments(x, y, z)
+        index = None
+        for i, (y0, y1, _bid) in enumerate(segments):
+            if y0 - 1e-6 <= hit_y <= y1 + 1e-6:
+                index = i
+                break
+        if index is None:
+            return None
+        low, high = segments[index][0], segments[index][1]
+        i = index - 1
+        while i >= 0 and abs(segments[i][1] - low) < 1e-6:
+            low = segments[i][0]
+            i -= 1
+        i = index + 1
+        while i < len(segments) and abs(segments[i][0] - high) < 1e-6:
+            high = segments[i][1]
+            i += 1
+        return low, high
+
     def _fill_layers(self):
         """初始世界分层填充（顶层草方块顶面正好落在 y=0）。"""
         layer_ids = []
@@ -293,6 +317,16 @@ class VoxelWorld:
         for entity in self.chunk_meshes.values():
             entity.color = tint
 
+    def destroy(self):
+        """退出到主页面时销毁所有区块实体。"""
+        for entity in self.chunk_meshes.values():
+            destroy(entity)
+        self.chunk_meshes.clear()
+        self.chunk_blocks.clear()
+        self.world_blocks.clear()
+        self.world_uppers.clear()
+        self.world_edits.clear()
+
     # ---------- 查询 ----------
     @staticmethod
     def _segment_hit(oy, dy, y0, y1, t_enter, t_exit):
@@ -347,7 +381,17 @@ class VoxelWorld:
         for _ in range(128):
             if t_enter > max_distance:
                 break
-            for (y0, y1, _bid) in self.segments(x, y, z):
+            # 从侧面进入该格时的高度：射线此时已在该段的竖直区间内，
+            # 命中的是这一格的侧面，不能误判成顶面/底面
+            entry_y = origin[1] + dy * t_enter
+            # 竖直射线按方向取最近的段：向下先撞最高段，向上先撞最低段
+            segments = self.segments(x, y, z)
+            if dy < -1e-9:
+                segments = list(reversed(segments))
+            for (y0, y1, _bid) in segments:
+                if (normal != (0, 0, 0) and normal[1] == 0
+                        and y0 - 1e-6 <= entry_y <= y1 + 1e-6):
+                    return (x, y, z), normal, entry_y
                 t_in, hit_y = self._segment_hit(origin[1], dy, y0, y1,
                                                t_enter, t_exit)
                 if t_in is None:

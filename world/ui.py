@@ -1,8 +1,11 @@
 """游戏 UI：HUD、准心、快捷栏、背包、暂停菜单、设置面板与选中指示器。"""
 
-from ursina import Button, Entity, Mesh, Text, camera, color, destroy, mouse, window
+import time as py_time
 
-from . import config, i18n, keybinds, packs
+from ursina import (Button, Entity, Mesh, Text, application, camera, color,
+                    destroy, mouse, window)
+
+from . import config, i18n, keybinds, packs, saves
 from .blocks import BLOCK_IDS, BLOCK_NAMES, BLOCKS
 from .storage import _save_number
 
@@ -13,10 +16,117 @@ if config.CJK_FONT:
 BUTTON_COLOR = color.rgba(.58, .62, .68, 1)
 # 半透明遮罩在 z=-10，页面文字/按钮必须更靠前（UI 相机朝 +Z，z 越小越靠前）
 UI_FRONT_Z = -20
+# 存档列表最多显示几行
+SAVES_MAX_ROWS = 8
+# 聊天框布局（UI 坐标：x∈±0.8, y∈±0.5）
+CHAT_X = -.78            # 左侧起点
+CHAT_WIDTH = 1.2         # 蒙版宽度
+CHAT_INPUT_Y = .375      # 输入行距屏幕底部的偏移
+CHAT_LINE_STEP = .042    # 每条消息的行距
+CHAT_MAX_LINES = 8       # 最多保留几条
+CHAT_LIFE = 10.0         # 消息存活秒数（最后 1.5 秒淡出）
+CHAT_MAX_INPUT = 100     # 输入长度上限
+
+
+class TextInput:
+    """单行文本输入框：聊天、创建玩家、新存档名共用。
+
+    字符来自 PhysicalKeys 物理轮询（不依赖 Ursina 事件层），
+    回车提交、Esc 取消，光标每 0.5 秒闪烁。
+    """
+
+    def __init__(self):
+        self.root = Entity(parent=camera.ui, enabled=False)
+        self.bg = Entity(parent=self.root, model='quad',
+                         color=color.rgba(0, 0, 0, .55),
+                         scale=(CHAT_WIDTH, .042), origin=(-.5, .5),
+                         x=CHAT_X, y=-CHAT_INPUT_Y, z=-1)
+        self.label = Text(parent=self.root, text='', origin=(-.5, .5),
+                          x=CHAT_X + .008, y=-CHAT_INPUT_Y + .007,
+                          scale=.55, z=-2)
+        self.text = ''
+        self.prompt = ''
+        self.max_len = CHAT_MAX_INPUT
+        self.on_submit = None
+        self.on_cancel = None
+        self.cursor_on = True
+        self.cursor_timer = 0.0
+
+    @property
+    def is_open(self):
+        return self.root.enabled
+
+    def open(self, prompt='', on_submit=None, position=None, width=None,
+             max_len=CHAT_MAX_INPUT, text='', on_cancel=None):
+        """打开输入框；position=(y, x) 指定输入行位置。"""
+        self.prompt = prompt
+        self.on_submit = on_submit
+        self.on_cancel = on_cancel
+        self.text = text[:max_len]
+        self.max_len = max_len
+        if position is not None:
+            y, x = position
+            self.bg.y = -y
+            self.bg.x = x
+            self.label.y = -y + .007
+            self.label.x = x + .008
+        if width is not None:
+            self.bg.scale = (width, .042)
+        self.cursor_on = True
+        self.cursor_timer = 0.0
+        self.root.enabled = True
+        self._refresh()
+
+    def close(self):
+        self.root.enabled = False
+        self.on_submit = None
+        self.on_cancel = None
+
+    def type(self, chars):
+        """输入字符（有长度上限）。"""
+        if not self.is_open or not chars:
+            return
+        self.text = (self.text + chars)[:self.max_len]
+        self.cursor_on = True
+        self.cursor_timer = 0.0
+        self._refresh()
+
+    def backspace(self):
+        if self.is_open and self.text:
+            self.text = self.text[:-1]
+            self._refresh()
+
+    def submit(self):
+        """回车：回调并关闭；没有回调时仅关闭。"""
+        callback, text = self.on_submit, self.text.strip()
+        self.close()
+        if callback:
+            callback(text)
+
+    def cancel(self):
+        """Esc：取消回调并关闭。"""
+        callback = self.on_cancel
+        self.close()
+        if callback:
+            callback()
+
+    def update(self, dt):
+        """光标闪烁。"""
+        if not self.is_open:
+            return
+        self.cursor_timer += dt
+        if self.cursor_timer >= .5:
+            self.cursor_timer = 0.0
+            self.cursor_on = not self.cursor_on
+            self._refresh()
+
+    def _refresh(self):
+        self.label.text = f'{self.prompt}{self.text}' + (
+            '|' if self.cursor_on else ' ')
 
 SETTING_KEYS = (
     'language', 'resource_pack', 'auto_jump', 'auto_jump_height',
-    'view_distance', 'fov', 'view_bob', 'brightness',
+    'view_distance', 'fov', 'view_bob', 'brightness', 'max_fps', 'vsync',
 )
 # key -> (最小值, 最大值, 步进, 小数位)
 SETTING_SPECS = {
@@ -32,6 +142,10 @@ class GameUI:
     def __init__(self, save_data=None, materials=None, on_save=None, on_quit=None):
         self.on_save = on_save
         self.on_quit = on_quit
+        self.on_play_save = lambda path: None      # 由 Game 设置：进入存档
+        self.on_player_created = lambda: None      # 由 Game 设置：玩家创建完成
+        self.on_quit_to_title = lambda: None       # 由 Game 设置：退出到主页面
+        self.notice_callback = None   # 由 Game 设置：显示一次性提示
         self.materials = materials
         self.inventory_open = False
         self.held_item = None
@@ -52,20 +166,11 @@ class GameUI:
         self.inv_page = 0
         self.selected_slot = 0
         self.inv_selected = 0
-
-        if save_data:
-            saved_hotbar = save_data.get('hotbar')
-            if isinstance(saved_hotbar, list):
-                for i in range(config.HOTBAR_SLOTS):
-                    if i < len(saved_hotbar):
-                        item = saved_hotbar[i]
-                        self.hotbar[i] = (item if isinstance(item, str) and item in BLOCKS
-                                          else None)
-                self.selected_slot = int(_save_number(
-                    save_data.get('selected_slot'), 0, 0, config.HOTBAR_SLOTS - 1))
+        self.load_hotbar(save_data)
 
         self._build_hud()
         self._build_crosshair()
+        self._build_chat()
         self._build_hotbar()
         self._build_inventory()
         self._build_tooltip()
@@ -73,8 +178,19 @@ class GameUI:
         self._build_settings()
         self._build_packs()
         self._build_keybinds()
+        self._build_title()
+        self._build_saves()
+        self._build_new_save()
+        self._build_player()
         self.selector = Entity(model='wireframe_cube', color=color.white,
                                scale=1.004, enabled=False)
+
+        # 主页面 / 存档列表状态
+        self.title_index = 0
+        self.saves_index = 0
+        self.save_entries = []          # saves.list_saves() 的结果
+        self.settings_from_title = False
+        self.screen = 'title'           # 当前页面：title/saves/new_save/player
 
         self.refresh_hotbar()
         self.refresh_inventory()
@@ -101,6 +217,72 @@ class GameUI:
                scale=(.003, .024), z=-1.01)
         Entity(parent=self.crosshair, model='quad', color=color.white,
                scale=(.024, .003), z=-1.01)
+
+    # ---------- 聊天 ----------
+    def _build_chat(self):
+        """聊天框：左下角消息记录（半透明黑底）+ 复用 TextInput 输入行。"""
+        self.player_name = 'Player'
+        self.chat_messages = []          # [(root, text, 创建时间)]
+        self.chat_root = Entity(parent=camera.ui)
+        self.text_input = TextInput()
+
+    def add_chat_message(self, text):
+        """在左下角添加一条聊天消息（自动堆叠、超时淡出）。"""
+        if not text:
+            return
+        root = Entity(parent=self.chat_root)
+        Entity(parent=root, model='quad', color=color.rgba(0, 0, 0, .5),
+               scale=(CHAT_WIDTH, .038), origin=(-.5, .5),
+               x=CHAT_X, y=0, z=-1)
+        label = Text(parent=root, text=text, origin=(-.5, .5),
+                     x=CHAT_X + .008, y=-.008, scale=.52, z=-2)
+        self.chat_messages.append((root, label, py_time.perf_counter()))
+        while len(self.chat_messages) > CHAT_MAX_LINES:
+            old_root, _old_label, _ = self.chat_messages.pop(0)
+            destroy(old_root)
+        self._restack_chat()
+
+    def _restack_chat(self):
+        """把消息从输入行上方依次往上排。"""
+        for i, (root, label, _born) in enumerate(self.chat_messages):
+            root.y = -.33 + (len(self.chat_messages) - 1 - i) * CHAT_LINE_STEP
+            label.y = -.008
+
+    def update_chat(self, dt):
+        """输入框光标闪烁 + 消息超时淡出移除。"""
+        self.text_input.update(dt)
+        if not self.chat_messages:
+            return
+        now = py_time.perf_counter()
+        expired = False
+        for message in list(self.chat_messages):
+            age = now - message[2]
+            if age > CHAT_LIFE:
+                destroy(message[0])
+                self.chat_messages.remove(message)
+                expired = True
+            elif age > CHAT_LIFE - 1.5:
+                # 最后 1.5 秒淡出
+                fade = max(0.0, (CHAT_LIFE - age) / 1.5)
+                message[1].color = color.rgba(1, 1, 1, fade)
+                message[0].children[0].color = color.rgba(0, 0, 0, .5 * fade)
+        if expired:
+            self._restack_chat()
+
+    def open_chat(self):
+        self.text_input.open(prompt='> ', on_submit=self.submit_chat,
+                             position=(-CHAT_INPUT_Y, CHAT_X),
+                             width=CHAT_WIDTH, max_len=CHAT_MAX_INPUT)
+
+    def submit_chat(self, text=''):
+        """发送消息（TextInput 的回调）。
+
+        注意：Ursina 的 Text 把以 < 开头的字符串当富文本标签，
+        所以前缀用方括号，不能用 <名字>。
+        """
+        text = (text if text is not None else self.text_input.text).strip()
+        if text:
+            self.add_chat_message(f'[{self.player_name}] {text}')
 
     def _build_hotbar(self):
         self.hotbar_root = Entity(parent=camera.ui)
@@ -178,15 +360,17 @@ class GameUI:
 
         self.menu_labels = (i18n.t('menu.resume'), i18n.t('menu.settings'),
                             i18n.t('menu.packs'), i18n.t('menu.keybinds'),
-                            i18n.t('menu.save'), i18n.t('menu.save_quit'))
+                            i18n.t('menu.save'), i18n.t('menu.save_quit'),
+                            i18n.t('menu.quit_to_title'))
         self.menu_buttons = [
-            Button(parent=self.menu_root, text=label, scale=(.5, .065),
+            Button(parent=self.menu_root, text=label, scale=(.5, .062),
                    color=BUTTON_COLOR,
-                   y=.13 - i * .085, on_click=action)
+                   y=.16 - i * .072, on_click=action)
             for i, (label, action) in enumerate(zip(
                 self.menu_labels,
                 (self.close_menu, self.open_settings, self.open_packs,
-                 self.open_keybinds, self._menu_save, self._menu_quit)))
+                 self.open_keybinds, self._menu_save, self._menu_quit,
+                 self._menu_quit_to_title)))
         ]
         self.refresh_menu_highlight()
         self._bring_to_front(self.menu_root)
@@ -199,8 +383,10 @@ class GameUI:
                                    origin=(0, 0), y=.42, scale=1.5)
 
         self.settings_rows = []
+        # 行数增加后自动压缩行距，避免超出面板
+        row_step = min(0.07, 0.60 / max(1, len(SETTING_KEYS) - 1))
         for i, key in enumerate(SETTING_KEYS):
-            y = .28 - i * .07
+            y = .29 - i * row_step
             label = Text(parent=self.settings_root, text=i18n.t(f'settings.{key}'),
                          origin=(-.5, 0), x=-.7, y=y, scale=.75)
             Button(parent=self.settings_root, text='-', scale=(.055, .055),
@@ -277,6 +463,285 @@ class GameUI:
                                 scale=(.28, .065), color=BUTTON_COLOR,
                                 x=.35, y=-.42, on_click=self.close_keybinds)
         self._bring_to_front(self.keys_root)
+
+    # ---------- 主页面 ----------
+    def _build_title(self):
+        """标题页：玩家信息 + 单人游戏 / 设置 / 退出。"""
+        self.title_root = Entity(parent=camera.ui, enabled=False)
+        Entity(parent=self.title_root, model='quad', color=color.rgba(0, 0, 0, .85),
+               scale=(3, 2), z=-10)
+        Text(parent=self.title_root, text=i18n.t('title.game'),
+             origin=(0, 0), y=.30, scale=2.4, z=UI_FRONT_Z)
+        self.title_player = Text(parent=self.title_root, text='',
+                                 origin=(0, 0), y=.185, scale=.8,
+                                 color=color.azure, z=UI_FRONT_Z)
+        labels = (i18n.t('title.singleplayer'), i18n.t('title.settings'),
+                  i18n.t('title.quit'))
+        self.title_buttons = [
+            Button(parent=self.title_root, text=label, scale=(.5, .065),
+                   color=BUTTON_COLOR, y=.02 - i * .08, on_click=action)
+            for i, (label, action) in enumerate(zip(
+                labels, (self.title_play, self.title_settings,
+                         self.title_quit)))
+        ]
+        self.title_hint = Text(parent=self.title_root, text=i18n.t('title.hint'),
+                               origin=(0, 0), y=-.32, scale=.55,
+                               color=color.gray, z=UI_FRONT_Z)
+        self._bring_to_front(self.title_root)
+
+    # ---------- 存档列表 ----------
+    def _build_saves(self):
+        """存档列表：选择 / 进入 / 新建 / 删除。"""
+        self.saves_root = Entity(parent=camera.ui, enabled=False)
+        Entity(parent=self.saves_root, model='quad', color=color.rgba(0, 0, 0, .85),
+               scale=(3, 2), z=-10)
+        self.saves_title = Text(parent=self.saves_root, text=i18n.t('saves.title'),
+                                origin=(0, 0), y=.42, scale=1.6, z=UI_FRONT_Z)
+        self.saves_rows = []
+        for i in range(SAVES_MAX_ROWS):
+            y = .30 - i * .055
+            label = Text(parent=self.saves_root, text='', origin=(-.5, 0),
+                         x=-.72, y=y, scale=.62, z=UI_FRONT_Z)
+            self.saves_rows.append(label)
+        self.saves_empty = Text(parent=self.saves_root,
+                                text=i18n.t('saves.empty'), origin=(0, 0),
+                                y=.05, scale=.7, color=color.gray, z=UI_FRONT_Z)
+        self.saves_status = Text(parent=self.saves_root, text='', origin=(0, 0),
+                                 y=-.27, scale=.65, color=color.azure, z=UI_FRONT_Z)
+        self.saves_hint = Text(parent=self.saves_root, text=i18n.t('saves.hint'),
+                               origin=(0, 0), y=-.33, scale=.5,
+                               color=color.gray, z=UI_FRONT_Z)
+        buttons = (
+            (i18n.t('saves.play'), -.42, self.saves_play),
+            (i18n.t('saves.new'), -.14, self.saves_new),
+            (i18n.t('saves.delete'), .14, self.saves_delete),
+            (i18n.t('saves.back'), .42, self.saves_back),
+        )
+        self.saves_buttons = [
+            Button(parent=self.saves_root, text=label, scale=(.28, .06),
+                   color=BUTTON_COLOR, x=x, y=-.42, on_click=action)
+            for label, x, action in buttons
+        ]
+        self._bring_to_front(self.saves_root)
+
+    # ---------- 创建新世界 ----------
+    def _build_new_save(self):
+        self.new_save_root = Entity(parent=camera.ui, enabled=False)
+        Entity(parent=self.new_save_root, model='quad', color=color.rgba(0, 0, 0, .85),
+               scale=(3, 2), z=-10)
+        self.new_save_title = Text(parent=self.new_save_root,
+                                   text=i18n.t('newSave.title'),
+                                   origin=(0, 0), y=.30, scale=1.6, z=UI_FRONT_Z)
+        self.new_save_label = Text(parent=self.new_save_root,
+                                   text=i18n.t('newSave.name'),
+                                   origin=(0, 0), y=.12, scale=.8,
+                                   color=color.gray, z=UI_FRONT_Z)
+        self.new_save_status = Text(parent=self.new_save_root, text='',
+                                    origin=(0, 0), y=-.22, scale=.65,
+                                    color=color.azure, z=UI_FRONT_Z)
+        self.new_save_buttons = [
+            Button(parent=self.new_save_root, text=i18n.t('newSave.create'),
+                   scale=(.28, .06), color=BUTTON_COLOR, x=-.35, y=-.34,
+                   on_click=self.new_save_create),
+            Button(parent=self.new_save_root, text=i18n.t('newSave.cancel'),
+                   scale=(.28, .06), color=BUTTON_COLOR, x=.35, y=-.34,
+                   on_click=self.new_save_cancel),
+        ]
+        self._bring_to_front(self.new_save_root)
+
+    # ---------- 创建玩家 ----------
+    def _build_player(self):
+        self.player_root = Entity(parent=camera.ui, enabled=False)
+        Entity(parent=self.player_root, model='quad', color=color.rgba(0, 0, 0, .85),
+               scale=(3, 2), z=-10)
+        self.player_title = Text(parent=self.player_root, text=i18n.t('player.title'),
+                                 origin=(0, 0), y=.30, scale=1.8, z=UI_FRONT_Z)
+        self.player_hint = Text(parent=self.player_root, text=i18n.t('player.hint'),
+                                origin=(0, 0), y=.18, scale=.65,
+                                color=color.gray, z=UI_FRONT_Z)
+        self.player_button = Button(parent=self.player_root,
+                                    text=i18n.t('player.confirm'),
+                                    scale=(.3, .06), color=BUTTON_COLOR, y=-.28,
+                                    on_click=self.player_confirm)
+        self._bring_to_front(self.player_root)
+
+    # ---------- 页面切换 ----------
+    def _enter_menu_ui(self):
+        """进入非游戏页面：收起 HUD/快捷栏/准星等游戏内 UI。"""
+        self.hotbar_root.enabled = False
+        self.hud.enabled = False
+        self.crosshair.enabled = False
+        self.selector.enabled = False
+        self.chat_root.enabled = False
+
+    def show_title(self):
+        self._hide_screens()
+        self._enter_menu_ui()
+        self.screen = 'title'
+        self.title_root.enabled = True
+        self.refresh_title()
+
+    def show_saves(self):
+        self._hide_screens()
+        self._enter_menu_ui()
+        self.screen = 'saves'
+        self.saves_root.enabled = True
+        self.refresh_saves()
+
+    def show_new_save(self):
+        self._hide_screens()
+        self._enter_menu_ui()
+        self.screen = 'new_save'
+        self.new_save_root.enabled = True
+        self.new_save_status.text = ''
+        self._open_name_input(self.new_save_create, self.new_save_cancel)
+
+    def show_player_creation(self):
+        self._hide_screens()
+        self._enter_menu_ui()
+        self.screen = 'player'
+        self.player_root.enabled = True
+        self._open_name_input(self.player_confirm, None)
+
+    def _open_name_input(self, on_submit, on_cancel):
+        """打开居中的名称输入框（创建玩家/新存档共用）。"""
+        self.text_input.open(prompt='', on_submit=on_submit,
+                             on_cancel=on_cancel,
+                             position=(.0, -.30), width=.8,
+                             max_len=saves.NAME_MAX_LEN)
+
+    def _hide_screens(self):
+        for root in (self.title_root, self.saves_root, self.new_save_root,
+                     self.player_root, self.settings_root, self.packs_root,
+                     self.keys_root, self.menu_root):
+            root.enabled = False
+        self.settings_open = self.packs_open = self.keys_open = False
+        self.menu_state['open'] = False
+        if self.text_input.is_open:
+            self.text_input.close()
+
+    def hide_all_screens(self):
+        """进入世界：收起所有页面 UI，恢复游戏内 HUD。"""
+        self._hide_screens()
+        self.inventory_open = False
+        self.inventory_root.enabled = False
+        self.hide_tooltip()
+        if self.held_item is not None:
+            self.clear_held()
+        self.hotbar_root.enabled = True
+        self.hud.enabled = True
+        self.crosshair.enabled = True
+        self.chat_root.enabled = True
+
+    # ---------- 刷新 ----------
+    def refresh_title(self):
+        self.title_player.text = i18n.t('title.welcome').format(
+            name=self.player_name)
+        for i, button in enumerate(self.title_buttons):
+            button.text = (f'> {i18n.t(["title.singleplayer", "title.settings", "title.quit"][i])} <'
+                           if i == self.title_index
+                           else f'  {i18n.t(["title.singleplayer", "title.settings", "title.quit"][i])}  ')
+
+    def refresh_saves(self):
+        self.save_entries = saves.list_saves()
+        if self.save_entries:
+            self.saves_index = min(self.saves_index, len(self.save_entries) - 1)
+        else:
+            self.saves_index = 0
+        self.saves_empty.enabled = not self.save_entries
+        for i, label in enumerate(self.saves_rows):
+            if i < len(self.save_entries):
+                entry = self.save_entries[i]
+                stamp = py_time.strftime('%Y-%m-%d %H:%M',
+                                         py_time.localtime(entry['mtime']))
+                label.text = i18n.t('saves.row').format(
+                    name=entry['name'], blocks=entry['blocks'], time=stamp)
+                label.enabled = True
+            else:
+                label.text = ''
+                label.enabled = False
+            label.color = color.azure if i == self.saves_index else color.white
+
+    # ---------- 主页面动作 ----------
+    def title_select(self, delta):
+        self.title_index = (self.title_index + delta) % len(self.title_buttons)
+        self.refresh_title()
+
+    def title_activate(self):
+        (self.title_play, self.title_settings, self.title_quit)[self.title_index]()
+
+    def title_play(self):
+        self.show_saves()
+
+    def title_settings(self):
+        self.settings_from_title = True
+        self.settings_open = True
+        self.settings_index = 0
+        self.title_root.enabled = False
+        self.settings_root.enabled = True
+        self.refresh_settings()
+
+    def title_quit(self):
+        if self.on_quit:
+            self.on_quit()
+        else:
+            application.quit()
+
+    # ---------- 存档列表动作 ----------
+    def saves_select(self, delta):
+        if not self.save_entries:
+            return
+        self.saves_index = (self.saves_index + delta) % len(self.save_entries)
+        self.refresh_saves()
+
+    def saves_play(self):
+        """进入选中的存档（由 Game 真正加载世界）。"""
+        if self.save_entries:
+            self.saves_status.text = ''
+            self.on_play_save(self.save_entries[self.saves_index]['path'])
+
+    def saves_new(self):
+        self.show_new_save()
+
+    def saves_delete(self):
+        if not self.save_entries:
+            return
+        name = self.save_entries[self.saves_index]['name']
+        if saves.delete_save(name):
+            self.saves_status.text = i18n.t('saves.deleted')
+            self.saves_index = 0
+        else:
+            self.saves_status.text = i18n.t('saves.save_failed')
+        self.refresh_saves()
+
+    def saves_back(self):
+        self.show_title()
+
+    # ---------- 创建新世界 ----------
+    def new_save_create(self, name):
+        name = saves.sanitize_name(name)
+        if not name or saves.save_file(name).exists():
+            self.new_save_status.text = i18n.t('saves.exists')
+            self._open_name_input(self.new_save_create, self.new_save_cancel)
+            return
+        if saves.create_save(name) is None:
+            self.new_save_status.text = i18n.t('notice.save_failed')
+            self._open_name_input(self.new_save_create, self.new_save_cancel)
+            return
+        self.on_play_save(saves.save_file(name))
+
+    def new_save_cancel(self):
+        self.show_saves()
+
+    # ---------- 创建玩家 ----------
+    def player_confirm(self, name):
+        name = saves.sanitize_name(name)
+        if not name:
+            self._open_name_input(self.player_confirm, None)
+            return
+        saves.save_player(name)
+        self.player_name = name
+        self.on_player_created()
 
     # ---------- 刷新 ----------
     @staticmethod
@@ -484,8 +949,10 @@ class GameUI:
             return i18n.t('language.name')
         if key == 'resource_pack':
             return i18n.pack_name(value or packs.DEFAULT_PACK_ID)
-        if key == 'auto_jump':
+        if key in ('auto_jump', 'vsync'):
             return i18n.t('settings.on' if value else 'settings.off')
+        if key == 'max_fps':
+            return i18n.t('settings.unlimited' if not value else str(int(value)))
         if key == 'auto_jump_height':
             return f'{value:.1f}'
         if key == 'view_bob':
@@ -513,6 +980,18 @@ class GameUI:
         if key == 'auto_jump':
             config.apply_settings(
                 {'auto_jump': not config.SETTINGS.get('auto_jump', True)})
+        elif key == 'vsync':
+            # Panda3D 运行时不支持切换垂直同步：保存设置，重启后生效
+            config.apply_settings(
+                {'vsync': not config.SETTINGS.get('vsync', True)})
+            if self.notice_callback:
+                self.notice_callback('notice.restart_required')
+        elif key == 'max_fps':
+            choices = list(config.FPS_CHOICES)
+            current = int(config.SETTINGS.get('max_fps', 0) or 0)
+            index = choices.index(current) if current in choices else 0
+            config.apply_settings(
+                {'max_fps': choices[(index + delta) % len(choices)]})
         else:
             low, high, step, decimals = SETTING_SPECS[key]
             value = config.SETTINGS.get(key, low) + delta * step
@@ -559,6 +1038,52 @@ class GameUI:
         self.settings_back.text = i18n.t('settings.back')
         self.refresh_settings()
 
+        # 主页面 / 存档 / 创建玩家
+        self.title_hint.text = i18n.t('title.hint')
+        self.saves_title.text = i18n.t('saves.title')
+        self.saves_hint.text = i18n.t('saves.hint')
+        self.saves_empty.text = i18n.t('saves.empty')
+        self.new_save_title.text = i18n.t('newSave.title')
+        self.new_save_label.text = i18n.t('newSave.name')
+        self.player_title.text = i18n.t('player.title')
+        self.player_hint.text = i18n.t('player.hint')
+        for button, key in zip(self.saves_buttons,
+                               ('saves.play', 'saves.new', 'saves.delete',
+                                'saves.back')):
+            button.text = i18n.t(key)
+        self.new_save_buttons[0].text = i18n.t('newSave.create')
+        self.new_save_buttons[1].text = i18n.t('newSave.cancel')
+        self.player_button.text = i18n.t('player.confirm')
+        self.refresh_title()      # 最后刷新，保留高亮标记
+        self.saves_title.text = i18n.t('saves.title')
+        self.saves_hint.text = i18n.t('saves.hint')
+        self.saves_empty.text = i18n.t('saves.empty')
+        for button, key in zip(self.saves_buttons,
+                               ('saves.play', 'saves.new', 'saves.delete',
+                                'saves.back')):
+            button.text = i18n.t(key)
+        self.new_save_title.text = i18n.t('newSave.title')
+        self.new_save_label.text = i18n.t('newSave.name')
+        self.new_save_buttons[0].text = i18n.t('newSave.create')
+        self.new_save_buttons[1].text = i18n.t('newSave.cancel')
+        self.player_title.text = i18n.t('player.title')
+        self.player_hint.text = i18n.t('player.hint')
+        self.player_button.text = i18n.t('player.confirm')
+
+    def load_hotbar(self, save_data):
+        """从存档恢复快捷栏与选中格（无效条目置空）。"""
+        if not save_data:
+            return
+        saved_hotbar = save_data.get('hotbar')
+        if isinstance(saved_hotbar, list):
+            for i in range(config.HOTBAR_SLOTS):
+                if i < len(saved_hotbar):
+                    item = saved_hotbar[i]
+                    self.hotbar[i] = (item if isinstance(item, str) and item in BLOCKS
+                                      else None)
+            self.selected_slot = int(_save_number(
+                save_data.get('selected_slot'), 0, 0, config.HOTBAR_SLOTS - 1))
+
     # ---------- 格子命中 ----------
     @staticmethod
     def slot_index_at(px, py, cols, rows, center_y):
@@ -588,6 +1113,50 @@ class GameUI:
         if hot_idx is not None:
             return ('hotbar', hot_idx)
         return None
+
+    # ---------- 页面鼠标命中（不依赖 Ursina 鼠标事件层） ----------
+    @staticmethod
+    def _hit_button(point, button):
+        """UI 坐标是否落在按钮矩形内。"""
+        if point is None:
+            return False
+        px, py = point
+        return (abs(px - button.x) <= button.scale_x / 2 + .012
+                and abs(py - button.y) <= button.scale_y / 2 + .012)
+
+    def title_click(self, point):
+        for i, button in enumerate(self.title_buttons):
+            if self._hit_button(point, button):
+                self.title_index = i
+                self.refresh_title()
+                button.on_click()
+                return
+
+    def saves_click(self, point):
+        if point is None:
+            return
+        # 行点击：选中该存档
+        for i in range(min(len(self.save_entries), SAVES_MAX_ROWS)):
+            y = .30 - i * .055
+            if abs(point[1] - y) <= .028 and -.72 <= point[0] <= .72:
+                if self.saves_index != i:
+                    self.saves_index = i
+                    self.refresh_saves()
+                return
+        for button in self.saves_buttons:
+            if self._hit_button(point, button):
+                button.on_click()
+                return
+
+    def new_save_click(self, point):
+        for button in self.new_save_buttons:
+            if self._hit_button(point, button):
+                button.on_click()
+                return
+
+    def player_click(self, point):
+        if self._hit_button(point, self.player_button):
+            self.player_button.on_click()
 
     @staticmethod
     def item_info(block_id):
@@ -687,6 +1256,7 @@ class GameUI:
         mouse.locked = True
 
     def open_settings(self):
+        self.settings_from_title = False
         self.settings_open = True
         self.settings_index = 0
         self.menu_root.enabled = False
@@ -697,8 +1267,14 @@ class GameUI:
     def close_settings(self):
         self.settings_open = False
         self.settings_root.enabled = False
-        self.menu_root.enabled = True
-        self.refresh_menu_highlight()
+        if self.settings_from_title:
+            # 从主页面打开的设置：返回主页面
+            self.settings_from_title = False
+            self.title_root.enabled = True
+            self.refresh_title()
+        else:
+            self.menu_root.enabled = True
+            self.refresh_menu_highlight()
         mouse.locked = False
 
     def open_packs(self):
@@ -744,6 +1320,11 @@ class GameUI:
     def _menu_quit(self):
         if self.on_quit:
             self.on_quit()
+
+    def _menu_quit_to_title(self):
+        """保存并退出到主页面（由 Game 真正卸载世界）。"""
+        if self.on_quit_to_title:
+            self.on_quit_to_title()
 
     # ---------- 背包鼠标拖拽 / 替换 ----------
     def handle_inventory_click(self, point, left_click, right_click=False):

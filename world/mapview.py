@@ -4,7 +4,7 @@
 Panda3D 的 16 位索引上限），红点表示玩家位置。
 """
 
-from ursina import Entity, Mesh, Text, camera, color, window
+from ursina import Entity, Mesh, Text, camera, color, destroy, window
 
 from . import config, i18n
 from .blocks import BLOCKS
@@ -96,3 +96,8 @@ class WorldMap:
     def retranslate(self):
         self.title.text = i18n.t('map.title')
         self.hint.text = i18n.t('map.hint')
+
+    def destroy(self):
+        """退出到主页面时销毁地图实体。"""
+        destroy(self.root)
+        self.cell_entities = []

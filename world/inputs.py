@@ -43,6 +43,33 @@ class PhysicalKeys:
     BUTTON2_MASK = 1 << 9      # 鼠标中键
     BUTTON3_MASK = 1 << 10     # 鼠标右键
 
+    # 可打印字符：键名 -> (无 Shift, 有 Shift)，供聊天输入使用
+    CHAR_MAP = {name: (name, name.upper()) for name in
+                'abcdefghijklmnopqrstuvwxyz'}
+    CHAR_MAP.update({
+        'space': (' ', ' '),
+        '0': ('0', ')'), '1': ('1', '!'), '2': ('2', '@'), '3': ('3', '#'),
+        '4': ('4', '$'), '5': ('5', '%'), '6': ('6', '^'), '7': ('7', '&'),
+        '8': ('8', '*'), '9': ('9', '('),
+        'minus': ('-', '_'), 'equal': ('=', '+'),
+        'bracket_left': ('[', '{'), 'bracket_right': (']', '}'),
+        'semicolon': (';', ':'), 'quote': ("'", '"'),
+        'comma': (',', '<'), 'period': ('.', '>'), 'slash': ('/', '?'),
+        'backslash': ('\\', '|'), 'grave': ('`', '~'),
+    })
+    # Windows 虚拟键码 -> (无 Shift, 有 Shift)
+    WIN_CHAR_MAP = {code: (chr(code), chr(code).upper())
+                    for code in range(0x41, 0x5B)}
+    WIN_CHAR_MAP.update({
+        0x30: ('0', ')'), 0x31: ('1', '!'), 0x32: ('2', '@'), 0x33: ('3', '#'),
+        0x34: ('4', '$'), 0x35: ('5', '%'), 0x36: ('6', '^'), 0x37: ('7', '&'),
+        0x38: ('8', '*'), 0x39: ('9', '('),
+        0x20: (' ', ' '), 0xBA: (';', ':'), 0xBB: ('=', '+'),
+        0xBC: (',', '<'), 0xBD: ('-', '_'), 0xBE: ('.', '>'),
+        0xBF: ('/', '?'), 0xC0: ('`', '~'), 0xDB: ('[', '{'),
+        0xDD: (']', '}'), 0xDC: ('\\', '|'), 0xDE: ("'", '"'),
+    })
+
     # Windows 虚拟键码（键名与 X11 分支输出的别名一致）
     VK_CODES = {c: 0x41 + i for i, c in enumerate('abcdefghijklmnopqrstuvwxyz')}
     VK_CODES.update({str(i): 0x30 + i for i in range(10)})
@@ -114,6 +141,12 @@ class PhysicalKeys:
             name: x11.XKeysymToKeycode(display, keysym)
             for name, keysym in self.KEYSYMS.items()
         }
+        # keycode -> 键名（取第一个，避免不同布局的别名互相覆盖）
+        self._keycode_names = {}
+        for name, code in self._keycodes.items():
+            if code and code not in self._keycode_names:
+                self._keycode_names[code] = name
+        self._prev_pressed = set()
 
     # ---------- Windows ----------
     def _init_win32(self):
@@ -156,6 +189,48 @@ class PhysicalKeys:
             if self._keymap[code // 8] & (1 << (code % 8)):
                 pressed.add(self.ALIASES.get(name, name))
         return pressed
+
+    def char_events(self):
+        """自上次调用以来新按下的可打印字符列表；无物理后端时返回 None。
+
+        聊天输入用：不依赖 Ursina 事件层（本机 key-up 丢失、space 无事件）。
+        """
+        if self._win32 is not None:
+            return self._char_events_win32()
+        if self._x11 is None or not self._x11.XQueryKeymap(
+                self._display, self._keymap_ptr):
+            return None
+        pressed = {code for name, code in self._keycodes.items()
+                   if 8 <= code < 256
+                   and self._keymap[code // 8] & (1 << (code % 8))}
+        fresh = pressed - self._prev_pressed
+        self._prev_pressed = pressed
+        if not fresh:
+            return []
+        shift = any(name in pressed for name in ('shift_l', 'shift_r'))
+        chars = []
+        for code in sorted(fresh):
+            pair = self.CHAR_MAP.get(self._keycode_names.get(code))
+            if pair:
+                chars.append(pair[1] if shift else pair[0])
+        return chars
+
+    def _char_events_win32(self):
+        user32 = self._win32
+        pressed = {code for code in self.WIN_CHAR_MAP
+                   if user32.GetAsyncKeyState(code) & 0x8000}
+        fresh = pressed - self._prev_pressed
+        self._prev_pressed = pressed
+        if not fresh:
+            return []
+        shift = bool(user32.GetAsyncKeyState(0x10) & 0x8000)
+        return [pair[1] if shift else pair[0]
+                for code in sorted(fresh)
+                if (pair := self.WIN_CHAR_MAP.get(code))]
+
+    def drain_chars(self):
+        """丢弃挂起的字符输入（打开聊天时调用，避免把打开前的按键算进来）。"""
+        self.char_events()
 
     def mouse_buttons(self):
         """返回 (左键, 中键, 右键) 的按住状态；无物理后端时返回 None。"""

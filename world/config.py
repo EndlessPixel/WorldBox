@@ -73,7 +73,12 @@ DEFAULT_SETTINGS = {
     'brightness': 1.0,          # 画面亮度（0.3 ~ 2.0）
     'language': 'zh',           # 界面语言：zh / en
     'resource_pack': '',        # 资源包 id（'' = 自带默认包 worldbox）
+    'max_fps': 0,               # 最大帧率（0 = 不限，软件限帧）
+    'vsync': True,              # 垂直同步（启动时生效，运行时切换需重启）
 }
+
+# 最大帧率可选项（0 = 不限）
+FPS_CHOICES = (0, 30, 60, 90, 120, 144, 240)
 
 
 def _cfg_number(value, default, low, high):
@@ -110,6 +115,12 @@ def load_settings():
     pack = raw.get('resource_pack')
     if isinstance(pack, str):
         settings['resource_pack'] = pack.strip()
+    if isinstance(raw.get('vsync'), bool):
+        settings['vsync'] = raw['vsync']
+    settings['max_fps'] = _cfg_number(raw.get('max_fps'), 0, 0, 1000)
+    if settings['max_fps'] not in FPS_CHOICES:      # 归到最近的可选项
+        settings['max_fps'] = min(FPS_CHOICES,
+                                  key=lambda v: abs(v - settings['max_fps']))
     print('[设置] ' + ', '.join(f'{k}={v}' for k, v in settings.items()))
     return settings
 
@@ -125,6 +136,7 @@ AUTO_JUMP_HEIGHT  = SETTINGS['auto_jump_height']  # 自动跳跃能跨过的高�
 BASE_FOV          = SETTINGS['fov']               # 基础视场角
 VIEW_BOB          = SETTINGS['view_bob']          # 移动时视角晃动幅度（米）
 BRIGHTNESS        = SETTINGS['brightness']        # 画面亮度
+MAX_FPS           = int(SETTINGS['max_fps'])      # 最大帧率（0 = 不限）
 
 # 世界分层（从最底层往上）：基岩 1 层、石头 3 层、泥土 2 层、草 1 层
 WORLD_LAYERS      = (
@@ -181,10 +193,15 @@ def save_settings():
 
 def apply_settings(updates):
     """运行时应用设置（同步模块级常量）并写回文件。"""
-    global VIEW_DISTANCE, AUTO_JUMP, AUTO_JUMP_HEIGHT, BASE_FOV, VIEW_BOB, BRIGHTNESS, ZOOM_FOV
+    global VIEW_DISTANCE, AUTO_JUMP, AUTO_JUMP_HEIGHT, BASE_FOV, VIEW_BOB, BRIGHTNESS, ZOOM_FOV, MAX_FPS
 
     if isinstance(updates.get('auto_jump'), bool):
         SETTINGS['auto_jump'] = updates['auto_jump']
+    if isinstance(updates.get('vsync'), bool):
+        SETTINGS['vsync'] = updates['vsync']   # 只能启动时生效，运行时只保存
+    if 'max_fps' in updates:
+        fps = _cfg_number(updates['max_fps'], SETTINGS['max_fps'], 0, 1000)
+        SETTINGS['max_fps'] = min(FPS_CHOICES, key=lambda v: abs(v - fps))
     for key, low, high in (('auto_jump_height', 0.5, 2.0),
                            ('view_distance', 16, 256),
                            ('fov', 20, 120),
@@ -203,5 +220,6 @@ def apply_settings(updates):
     BASE_FOV = SETTINGS['fov']
     VIEW_BOB = SETTINGS['view_bob']
     BRIGHTNESS = SETTINGS['brightness']
+    MAX_FPS = int(SETTINGS['max_fps'])
     ZOOM_FOV = min(15, BASE_FOV * 0.6)
     return save_settings()

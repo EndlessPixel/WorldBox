@@ -1,11 +1,17 @@
-"""游戏编排：输入分发、每帧更新、挖掘/放置、昼夜、视距剔除与存档。"""
+"""游戏编排：输入分发、每帧更新、挖掘/放置、昼夜、视距剔除与存档。
+
+启动流程：没有玩家档案 → 创建玩家；否则进入主页面（单人游戏/设置）。
+进入存档后才创建世界；退出到主页面会卸载世界。
+"""
 
 import atexit
 import math
+import time as py_time
+from pathlib import Path
 
 from ursina import Sky, application, camera, color, held_keys, mouse, time, window
 
-from . import blocks, config, i18n, keybinds, packs, storage
+from . import blocks, config, i18n, keybinds, packs, saves, storage
 from .inputs import PhysicalKeys
 from .mapview import WorldMap
 from .materials import BlockMaterials
@@ -16,25 +22,35 @@ from .voxel import VoxelWorld
 
 class Game:
     def __init__(self):
-        self.save_data = storage.load_save()
-        print(f'[存档] {"已读取 " + config.SAVE_FILE.name if self.save_data else "无存档，使用默认世界"}')
+        # 迁移旧存档（根目录 world_save.json → saves/ 下第一个存档）
+        saves.migrate_legacy()
 
         # 加载资源包（默认包 + 设置里选中的包），缺纹理时从 CDN 下载
         packs.ensure_active()
         self._pack = config.SETTINGS.get('resource_pack') or ''
 
-        self.world = VoxelWorld(self.save_data)
-        self.player = Player(self.world, self.save_data)
-        self.ui = GameUI(self.save_data, self.world.materials,
+        # 玩家档案：没有就要先创建
+        profile = saves.load_player()
+        self.player_name = profile['name'] if profile else ''
+
+        self.world = None
+        self.player = None
+        self.mapview = None
+        self.save_path = None
+        self.save_data = None
+        self.state = 'menu' if profile else 'create_player'
+
+        self.ui = GameUI(save_data=None, materials=None,
                          on_save=self.save, on_quit=self.quit)
+        self.ui.notice_callback = self._show_notice
+        self.ui.player_name = self.player_name or 'Player'
+        self.ui.on_play_save = self.start_save
+        self.ui.on_player_created = self._player_created
+        self.ui.on_quit_to_title = self.quit_to_title
         self.keyboard = PhysicalKeys()
-        self.mapview = WorldMap(self.world, self.player)
         self.sky = Sky()
 
         self.day_time = config.START_DAY_TIME
-        if self.save_data:
-            self.day_time = storage._save_number(
-                self.save_data.get('day_time'), self.day_time, 0.0, 1.0) % 1.0
         self.last_solar = -2.0
         self.hud_timer = 0.0
         self.hud_frames = 0
@@ -44,16 +60,72 @@ class Game:
         self.prev_middle = False
         self.prev_right = False
         self.pending_scroll = 0
-        self.notice = i18n.t('notice.help')
-        self.notice_timer = 10.0
+        self._pending_chars = ''       # 无物理输入后端时累积的聊天字符
+        self.notice = ''
+        self.notice_timer = 0.0
         self.autosave_timer = 0.0
         self._language = i18n.get_language()
+        self._last_frame_time = py_time.perf_counter()
 
-        mouse.locked = True
+        if self.state == 'create_player':
+            self.ui.show_player_creation()
+        else:
+            self.ui.show_title()
+        mouse.locked = False
         atexit.register(self.save)   # 覆盖窗口关闭 / alt+F4 等退出路径
+
+    # ---------- 启动流程 ----------
+    def _player_created(self):
+        """玩家创建完成：进入主页面。"""
+        self.state = 'menu'
+        self.ui.show_title()
+
+    def start_save(self, path):
+        """加载存档并进入世界。"""
+        path = Path(path)
+        save_data = saves.load_save(path) or {}
+        self.save_path = path
+        self.save_data = save_data
+
+        self.world = VoxelWorld(save_data)
+        self.player = Player(self.world, save_data)
+        self.mapview = WorldMap(self.world, self.player)
+        self.ui.apply_materials(self.world.materials)
+        self.ui.load_hotbar(save_data)
+        self.ui.refresh_hotbar()
+
+        self.day_time = config.START_DAY_TIME
+        if save_data:
+            self.day_time = storage._save_number(
+                save_data.get('day_time'), self.day_time, 0.0, 1.0) % 1.0
+        self.autosave_timer = 0.0
+        self.ui.hide_all_screens()
+        self.state = 'playing'
+        mouse.locked = True
+        self.notice = i18n.t('notice.help')
+        self.notice_timer = 10.0
+        print(f'[存档] 已进入 {path}')
+
+    def quit_to_title(self):
+        """保存并卸载世界，返回主页面。"""
+        self.save()
+        if self.world is not None:
+            self.world.destroy()
+        if self.mapview is not None:
+            self.mapview.destroy()
+        self.world = None
+        self.player = None
+        self.mapview = None
+        self.save_path = None
+        self.save_data = None
+        self.state = 'title'
+        self.ui.show_title()
+        mouse.locked = False
 
     # ---------- 存档 ----------
     def save(self):
+        if self.world is None or self.save_path is None:
+            return False
         payload = {
             'version': 2,
             'x': round(self.player.pos.x, 4),
@@ -66,17 +138,83 @@ class Game:
             'selected_slot': self.ui.selected_slot,
             'day_time': round(self.day_time, 5),
         }
-        return storage.save_payload(payload)
+        return saves.save_payload(self.save_path, payload)
 
     def quit(self):
         self.save()
         application.quit()
+
+    # ---------- 主页面/存档页输入 ----------
+    def _update_menus(self, just_pressed, left_click, point):
+        """非游戏状态下的页面导航（设置/主页面/存档/创建玩家）。"""
+        ui = self.ui
+        if ui.settings_open:
+            # 设置页：与暂停菜单一致的导航
+            if 'up' in just_pressed:
+                ui.settings_index = (ui.settings_index - 1) % len(ui.settings_rows)
+                ui.refresh_settings()
+            if 'down' in just_pressed:
+                ui.settings_index = (ui.settings_index + 1) % len(ui.settings_rows)
+                ui.refresh_settings()
+            current_key = ui.settings_rows[ui.settings_index][0]
+            if 'left' in just_pressed:
+                ui.adjust_setting(current_key, -1)
+            if 'right' in just_pressed:
+                ui.adjust_setting(current_key, 1)
+            if 'enter' in just_pressed:
+                ui.adjust_setting(current_key, 1)
+            if 'escape' in just_pressed:
+                ui.close_settings()
+            return
+        if ui.screen == 'title':
+            if 'up' in just_pressed:
+                ui.title_select(-1)
+            if 'down' in just_pressed:
+                ui.title_select(1)
+            if 'enter' in just_pressed:
+                ui.title_activate()
+            if 'escape' in just_pressed:
+                ui.title_quit()
+            if left_click:
+                ui.title_click(point)
+            return
+        if ui.screen == 'saves':
+            if 'up' in just_pressed:
+                ui.saves_select(-1)
+            if 'down' in just_pressed:
+                ui.saves_select(1)
+            if 'enter' in just_pressed:
+                ui.saves_play()
+            if 'n' in just_pressed:
+                ui.saves_new()
+            if 'd' in just_pressed:
+                ui.saves_delete()
+            if 'escape' in just_pressed:
+                ui.saves_back()
+            if left_click:
+                ui.saves_click(point)
+            return
+        if ui.screen == 'new_save':
+            if left_click:
+                ui.new_save_click(point)
+            return
+        if ui.screen == 'player':
+            if left_click:
+                ui.player_click(point)
+            return
+
+    def _show_notice(self, key):
+        """UI 回调：显示一次性提示（i18n 键）。"""
+        self.notice = i18n.t(key)
+        self.notice_timer = 2.5
 
     def _apply_resource_pack(self, pack_id):
         """切换资源包：确保纹理已下载，重建材质、区块网格与物品图标。"""
         self._pack = pack_id
         if pack_id:
             packs.ensure_pack(pack_id)
+        if self.world is None:      # 主页面：没有世界可重建
+            return
         self.world.materials = BlockMaterials()
         self.world.build_all()
         self.ui.apply_materials(self.world.materials)
@@ -84,20 +222,27 @@ class Game:
         self.notice_timer = 2.0
 
     @staticmethod
-    def _placement_target(hx, hy, hz, normal, hit_y):
+    def _placement_target(hx, hy, hz, normal, hit_y, segment=None):
         """根据命中面算出放置位置 (tx, ty, tz, layer)。
 
-        半砖顶面命中 → 放在同一格的上层；整块顶面 → 放在上一格的下层；
-        底面 → 放在下方格的上层；侧面 → 相邻格，命中上半部分时放上层。
+        下半砖顶面 → 同格上层；上半砖底面 → 同格下层（补全整格）；
+        整格/下半砖底面 → 下一格上层；整格顶面 → 上一格下层；
+        侧面 → 相邻格，命中段是上半砖时放上层。
         """
+        if segment is not None:
+            seg_y0, seg_y1 = segment[0], segment[1]
+        else:                      # 没有段信息时按整格处理
+            seg_y0, seg_y1 = hy, hy + 1.0
         if normal == (0, 1, 0):                     # 顶面
-            if abs(hit_y - (hy + 0.5)) < 1e-6:
+            if abs(seg_y1 - (hy + 0.5)) < 1e-6:
                 return hx, hy, hz, 1
             return hx, hy + 1, hz, 0
         if normal == (0, -1, 0):                    # 底面
+            if abs(seg_y0 - (hy + 0.5)) < 1e-6:
+                return hx, hy, hz, 0
             return hx, hy - 1, hz, 1
         tx, tz = hx + normal[0], hz + normal[2]     # 侧面
-        layer = 1 if abs(hit_y - (hy + 0.5)) < 1e-6 else 0
+        layer = 1 if abs(seg_y0 - (hy + 0.5)) < 1e-6 else 0
         return tx, hy, tz, layer
 
     def _drop_item(self):
@@ -118,6 +263,12 @@ class Game:
             self.pending_scroll += 1
         elif key == 'scroll down':
             self.pending_scroll -= 1
+        # 无物理输入后端时的文本输入回退（Ursina 事件层）
+        if self.ui.text_input.is_open:
+            if key == 'space':
+                self._pending_chars += ' '
+            elif len(key) == 1 and key.isprintable():
+                self._pending_chars += key
         if (key == 'left mouse down' and not self.ui.menu_state['open']
                 and not self.ui.inventory_open and not mouse.locked):
             mouse.locked = True
@@ -129,6 +280,14 @@ class Game:
             return
         dt = min(raw_dt, 0.05)
 
+        # --- 最大帧率限制（软件限帧：Panda3D 运行时不限帧时跑满） ---
+        if config.MAX_FPS > 0:
+            wait = (1.0 / config.MAX_FPS
+                    - (py_time.perf_counter() - self._last_frame_time))
+            if wait > 0:
+                py_time.sleep(wait)
+        self._last_frame_time = py_time.perf_counter()
+
         # --- 窗口最小化时不要继续锁定/抢占鼠标指针 ---
         panda_window = application.base.win if application.base else None
         if panda_window is not None:
@@ -136,19 +295,22 @@ class Game:
             if minimized and mouse.locked:
                 mouse.locked = False
             elif (not minimized and not mouse.locked
+                  and self.state == 'playing'
                   and not self.ui.menu_state['open']
                   and not self.ui.inventory_open
                   and not self.ui.settings_open):
                 mouse.locked = True
 
-        # --- 语言切换后刷新常驻提示 ---
+        # --- 语言切换后刷新静态文本 ---
         if i18n.get_language() != self._language:
             self._language = i18n.get_language()
-            self.notice = i18n.t('notice.help')
-            self.notice_timer = 3.0
-            self.mapview.retranslate()
+            if self.state == 'playing':
+                self.notice = i18n.t('notice.help')
+                self.notice_timer = 3.0
+                self.mapview.retranslate()
+            self.ui.retranslate()
 
-        # --- 资源包切换：下载纹理并热重载材质 ---
+        # --- 资源包切换：下载纹理并热重载材质（仅游戏内） ---
         active_pack = config.SETTINGS.get('resource_pack') or ''
         if active_pack != self._pack:
             self._apply_resource_pack(active_pack)
@@ -184,6 +346,39 @@ class Game:
         middle_click = middle_down and not self.prev_middle
         right_click = right_down and not self.prev_right
         self.prev_left, self.prev_middle, self.prev_right = left_down, middle_down, right_down
+
+        # --- 聊天框/文本输入：回车提交，Esc 取消，打字时屏蔽游戏按键 ---
+        if self.ui.text_input.is_open:
+            if 'enter' in just_pressed:
+                self.ui.text_input.submit()
+            elif 'escape' in just_pressed:
+                self.ui.text_input.cancel()
+            else:
+                if 'backspace' in just_pressed:
+                    self.ui.text_input.backspace()
+                chars = self.keyboard.char_events()
+                if chars is None:              # 无物理后端：用事件层累积的字符
+                    chars, self._pending_chars = self._pending_chars, ''
+                if chars:
+                    self.ui.text_input.type(''.join(chars))
+            keys = set()
+            just_pressed = set()
+        elif (self.state == 'playing' and 'enter' in just_pressed
+              and not self.ui.menu_state['open']
+              and not self.mapview.is_open and not self.ui.inventory_open):
+            self.ui.open_chat()
+            self.keyboard.drain_chars()
+            keys = set()
+            just_pressed = set()
+        self.ui.update_chat(raw_dt)
+
+        # --- 非游戏状态：主页面/存档/创建玩家/设置 ---
+        if self.state != 'playing':
+            point = self.keyboard.pointer_ui_position()
+            if point is None:
+                point = (mouse.x, mouse.y)
+            self._update_menus(just_pressed, left_click, point)
+            return
 
         # --- M 全屏地图 / ESC 逐层返回 ---
         if 'm' in just_pressed and self.mapview.is_open:
@@ -396,11 +591,12 @@ class Game:
         if hit is not None:
             (hx, hy, hz), normal, hit_y = hit
             segment = self.world.segment_at_height(hx, hy, hz, hit_y)
-            # 选择框：按命中方块的实际高度显示（半砖只有半格高）
-            if segment is not None:
-                seg_y0, seg_y1, _ = segment
-                self.ui.selector.position = (hx + .5, (seg_y0 + seg_y1) / 2, hz + .5)
-                self.ui.selector.scale = (1.004, max(0.004, seg_y1 - seg_y0), 1.004)
+            # 选择框：按连续实体区间显示（两半砖组成整格时框住整格）
+            run = self.world.solid_run(hx, hy, hz, hit_y)
+            if run is not None:
+                run_y0, run_y1 = run
+                self.ui.selector.position = (hx + .5, (run_y0 + run_y1) / 2, hz + .5)
+                self.ui.selector.scale = (1.004, max(0.004, run_y1 - run_y0), 1.004)
 
             if middle_click and segment is not None:   # 中键取方块
                 picked = segment[2]
@@ -418,7 +614,8 @@ class Game:
                     self.world.record_edit(hx, hy, hz)
                     self.world.rebuild_around(hx, hz)
             if right_click and normal != (0, 0, 0):
-                tx, ty, tz, layer = self._placement_target(hx, hy, hz, normal, hit_y)
+                tx, ty, tz, layer = self._placement_target(
+                    hx, hy, hz, normal, hit_y, segment)
                 block_id = self.ui.hotbar[self.ui.selected_slot]
                 if (block_id is not None
                         and 0 <= tx < config.WORLD_SIZE and 0 <= tz < config.WORLD_SIZE
@@ -434,6 +631,9 @@ class Game:
         show_hotbar = not self.ui.menu_state['open'] and not self.mapview.is_open
         if self.ui.hotbar_root.enabled != show_hotbar:
             self.ui.hotbar_root.enabled = show_hotbar
+        # 地图打开时隐藏聊天记录
+        if self.ui.chat_root.enabled == self.mapview.is_open:
+            self.ui.chat_root.enabled = not self.mapview.is_open
 
         # --- 区域化视距剔除 ---
         view_sq = config.VIEW_DISTANCE * config.VIEW_DISTANCE
