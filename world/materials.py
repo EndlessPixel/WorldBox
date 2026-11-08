@@ -85,6 +85,56 @@ SURFACE_FILES = {
         'side': 'end_stone.png',
         'bottom': 'end_stone.png',
     },
+    'worldbox:mossy_cobblestone.block': {
+        'top': 'mossy_cobblestone.png',
+        'side': 'mossy_cobblestone.png',
+        'bottom': 'mossy_cobblestone.png',
+    },
+    'worldbox:mossy_cobblestone_slab.block': {
+        'top': 'mossy_cobblestone.png',
+        'side': 'mossy_cobblestone.png',
+        'bottom': 'mossy_cobblestone.png',
+    },
+    'worldbox:mossy_stone_bricks.block': {
+        'top': 'mossy_stone_bricks.png',
+        'side': 'mossy_stone_bricks.png',
+        'bottom': 'mossy_stone_bricks.png',
+    },
+    'worldbox:mossy_stone_bricks_slab.block': {
+        'top': 'mossy_stone_bricks.png',
+        'side': 'mossy_stone_bricks.png',
+        'bottom': 'mossy_stone_bricks.png',
+    },
+    'worldbox:cracked_stone_bricks.block': {
+        'top': 'cracked_stone_bricks.png',
+        'side': 'cracked_stone_bricks.png',
+        'bottom': 'cracked_stone_bricks.png',
+    },
+    'worldbox:cracked_stone_bricks_slab.block': {
+        'top': 'cracked_stone_bricks.png',
+        'side': 'cracked_stone_bricks.png',
+        'bottom': 'cracked_stone_bricks.png',
+    },
+    'worldbox:podzol.block': {
+        'top': 'podzol_top.png',
+        'side': 'podzol_side.png',
+        'bottom': 'podzol_side.png',
+    },
+    'worldbox:mycelium.block': {
+        'top': 'mycelium_top.png',
+        'side': 'mycelium_side.png',
+        'bottom': 'mycelium_side.png',
+    },
+    'worldbox:netherrack.block': {
+        'top': 'netherrack.png',
+        'side': 'netherrack.png',
+        'bottom': 'netherrack.png',
+    },
+    'worldbox:chiseled_stone_bricks.block': {
+        'top': 'chiseled_stone_bricks.png',
+        'side': 'chiseled_stone_bricks.png',
+        'bottom': 'chiseled_stone_bricks.png',
+    },
 }
 
 

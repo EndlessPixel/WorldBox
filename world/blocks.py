@@ -30,6 +30,23 @@ DEFAULT_BLOCKS = (
     {'id': 'worldbox:stone_bricks.block','name': 'Stone Bricks','color': (122, 122, 122)},
     {'id': 'worldbox:stone_bricks_slab.block', 'name': 'Stone Bricks Slab',
      'color': (122, 122, 122)},
+    {'id': 'worldbox:mossy_cobblestone.block', 'name': 'Mossy Cobblestone',
+     'color': (100, 102, 90)},
+    {'id': 'worldbox:mossy_cobblestone_slab.block', 'name': 'Mossy Cobblestone Slab',
+     'color': (100, 102, 90)},
+    {'id': 'worldbox:mossy_stone_bricks.block', 'name': 'Mossy Stone Bricks',
+     'color': (120, 122, 110)},
+    {'id': 'worldbox:mossy_stone_bricks_slab.block', 'name': 'Mossy Stone Bricks Slab',
+     'color': (120, 122, 110)},
+    {'id': 'worldbox:cracked_stone_bricks.block', 'name': 'Cracked Stone Bricks',
+     'color': (122, 122, 122)},
+    {'id': 'worldbox:cracked_stone_bricks_slab.block', 'name': 'Cracked Stone Bricks Slab',
+     'color': (122, 122, 122)},
+    {'id': 'worldbox:podzol.block', 'name': 'Podzol', 'color': (120, 85, 55)},
+    {'id': 'worldbox:mycelium.block', 'name': 'Mycelium', 'color': (140, 130, 145)},
+    {'id': 'worldbox:netherrack.block', 'name': 'Netherrack', 'color': (112, 52, 44)},
+    {'id': 'worldbox:chiseled_stone_bricks.block', 'name': 'Chiseled Stone Bricks',
+     'color': (122, 122, 122)},
 )
 
 

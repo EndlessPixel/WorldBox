@@ -10,5 +10,14 @@
   "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/bricks.png": "assets/worldbox/blocks/bricks.png",
   "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/end_stone.png": "assets/worldbox/blocks/end_stone.png",
   "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/clay.png": "assets/worldbox/blocks/clay.png",
-  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/stone_bricks.png": "assets/worldbox/blocks/stone_bricks.png"
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/stone_bricks.png": "assets/worldbox/blocks/stone_bricks.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/mossy_cobblestone.png": "assets/worldbox/blocks/mossy_cobblestone.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/mossy_stone_bricks.png": "assets/worldbox/blocks/mossy_stone_bricks.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/cracked_stone_bricks.png": "assets/worldbox/blocks/cracked_stone_bricks.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/podzol_top.png": "assets/worldbox/blocks/podzol_top.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/podzol_side.png": "assets/worldbox/blocks/podzol_side.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/mycelium_top.png": "assets/worldbox/blocks/mycelium_top.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/mycelium_side.png": "assets/worldbox/blocks/mycelium_side.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/netherrack.png": "assets/worldbox/blocks/netherrack.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/chiseled_stone_bricks.png": "assets/worldbox/blocks/chiseled_stone_bricks.png"
 }
