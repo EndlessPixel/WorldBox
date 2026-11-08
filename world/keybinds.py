@@ -23,6 +23,7 @@ DEFAULT_BINDINGS = {
     'menu': 'escape',
     'save': 'f5',
     'map': 'm',
+    'drop': 'g',
 }
 
 VALID_KEYS = (set(PhysicalKeys.KEYSYMS) | set(PhysicalKeys.ALIASES.values())

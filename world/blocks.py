@@ -25,7 +25,11 @@ DEFAULT_BLOCKS = (
     {'id': 'worldbox:bricks_slab.block','name': 'Bricks Slab','color': (156, 83, 62)  },
     {'id': 'worldbox:obsidian.block',   'name': 'Obsidian',   'color': (26, 22, 38)   },
     {'id': 'worldbox:bedrock.block',    'name': 'Bedrock',    'color': (90, 90, 90)   },
-    {'id': 'worldbox:end_stone.block',  'name': 'End Stone',  'color': (219, 213, 161)}
+    {'id': 'worldbox:end_stone.block',  'name': 'End Stone',  'color': (219, 213, 161)},
+    {'id': 'worldbox:clay.block',       'name': 'Clay',       'color': (160, 166, 179)},
+    {'id': 'worldbox:stone_bricks.block','name': 'Stone Bricks','color': (122, 122, 122)},
+    {'id': 'worldbox:stone_bricks_slab.block', 'name': 'Stone Bricks Slab',
+     'color': (122, 122, 122)},
 )
 
 

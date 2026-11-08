@@ -53,5 +53,20 @@
     "id": "worldbox:end_stone.block",
     "name": "End Stone",
     "color": [219, 213, 161]
+  },
+  {
+    "id": "worldbox:clay.block",
+    "name": "Clay",
+    "color": [160, 166, 179]
+  },
+  {
+    "id": "worldbox:stone_bricks.block",
+    "name": "Stone Bricks",
+    "color": [122, 122, 122]
+  },
+  {
+    "id": "worldbox:stone_bricks_slab.block",
+    "name": "Stone Bricks Slab",
+    "color": [122, 122, 122]
   }
 ]

@@ -83,6 +83,37 @@ class Game:
         self.notice = i18n.t('notice.pack_switched')
         self.notice_timer = 2.0
 
+    @staticmethod
+    def _placement_target(hx, hy, hz, normal, hit_y):
+        """根据命中面算出放置位置 (tx, ty, tz, layer)。
+
+        半砖顶面命中 → 放在同一格的上层；整块顶面 → 放在上一格的下层；
+        底面 → 放在下方格的上层；侧面 → 相邻格，命中上半部分时放上层。
+        """
+        if normal == (0, 1, 0):                     # 顶面
+            if abs(hit_y - (hy + 0.5)) < 1e-6:
+                return hx, hy, hz, 1
+            return hx, hy + 1, hz, 0
+        if normal == (0, -1, 0):                    # 底面
+            return hx, hy - 1, hz, 1
+        tx, tz = hx + normal[0], hz + normal[2]     # 侧面
+        layer = 1 if abs(hit_y - (hy + 0.5)) < 1e-6 else 0
+        return tx, hy, tz, layer
+
+    def _drop_item(self):
+        """丢弃：先丢手上的物品，否则清空当前快捷栏格。"""
+        if self.ui.held_item is not None:
+            self.ui.held_item = None
+            for icon in self.ui.held_icons.values():
+                icon.enabled = False
+        elif self.ui.hotbar[self.ui.selected_slot] is not None:
+            self.ui.hotbar[self.ui.selected_slot] = None
+            self.ui.refresh_hotbar()
+        else:
+            return
+        self.notice = i18n.t('notice.dropped')
+        self.notice_timer = 1.5
+
     # ---------- 输入 ----------
     def input(self, key):
         if key == 'scroll up':
@@ -192,6 +223,10 @@ class Game:
             saved = self.save()
             self.notice = i18n.t('notice.saved' if saved else 'notice.save_failed')
             self.notice_timer = 1.5
+
+        # --- G：丢弃当前手持 / 快捷栏方块 ---
+        if 'g' in just_pressed and not self.ui.menu_state['open']:
+            self._drop_item()
 
         # --- 定时自动存档 ---
         self.autosave_timer += raw_dt
@@ -346,37 +381,41 @@ class Game:
         show_selector = hit is not None
         if self.ui.selector.enabled != show_selector:
             self.ui.selector.enabled = show_selector
-        if hit is not None:
-            hx, hy, hz = hit[0]
-            self.ui.selector.position = (hx + .5, hy + .5, hz + .5)
 
         if hit is not None:
-            (hx, hy, hz), normal = hit
-            if middle_click:   # 中键取方块：快捷栏已有就切过去，没有就放进当前格
-                picked = self.world.world_blocks.get((hx, hy, hz))
-                if picked is not None:
-                    if picked in self.ui.hotbar:
-                        self.ui.selected_slot = self.ui.hotbar.index(picked)
-                    else:
-                        self.ui.hotbar[self.ui.selected_slot] = picked
-                    self.ui.refresh_hotbar()
-            if left_click:
+            (hx, hy, hz), normal, hit_y = hit
+            segment = self.world.segment_at_height(hx, hy, hz, hit_y)
+            # 选择框：按命中方块的实际高度显示（半砖只有半格高）
+            if segment is not None:
+                seg_y0, seg_y1, _ = segment
+                self.ui.selector.position = (hx + .5, (seg_y0 + seg_y1) / 2, hz + .5)
+                self.ui.selector.scale = (1.004, max(0.004, seg_y1 - seg_y0), 1.004)
+
+            if middle_click and segment is not None:   # 中键取方块
+                picked = segment[2]
+                if picked in self.ui.hotbar:
+                    self.ui.selected_slot = self.ui.hotbar.index(picked)
+                else:
+                    self.ui.hotbar[self.ui.selected_slot] = picked
+                self.ui.refresh_hotbar()
+            if left_click and segment is not None:
+                layer = 0 if segment[0] == hy else 1
                 # 只有世界最底层的基岩不可破坏；玩家自己放置的基岩可以挖掉
-                if hy == config.MIN_BLOCK_Y:
+                if layer == 0 and hy == config.MIN_BLOCK_Y:
                     self.notice, self.notice_timer = i18n.t('notice.bedrock'), 1.5
-                elif self.world.remove_block(hx, hy, hz):
-                    self.world.world_edits[(hx, hy, hz)] = None
+                elif self.world.remove_block(hx, hy, hz, layer=layer):
+                    self.world.record_edit(hx, hy, hz)
                     self.world.rebuild_around(hx, hz)
             if right_click and normal != (0, 0, 0):
-                tx, ty, tz = hx + normal[0], hy + normal[1], hz + normal[2]
+                tx, ty, tz, layer = self._placement_target(hx, hy, hz, normal, hit_y)
                 block_id = self.ui.hotbar[self.ui.selected_slot]
                 if (block_id is not None
                         and 0 <= tx < config.WORLD_SIZE and 0 <= tz < config.WORLD_SIZE
                         and config.MIN_BLOCK_Y <= ty < config.MAX_BLOCK_Y
-                        and (tx, ty, tz) not in self.world.world_blocks
-                        and not self.player.overlaps(tx, ty, tz, block_id)):
-                    self.world.add_block(tx, ty, tz, block_id)
-                    self.world.world_edits[(tx, ty, tz)] = block_id
+                        and self.world.can_place(tx, ty, tz, layer, block_id)
+                        and not self.player.overlaps(tx, ty, tz, block_id, layer)):
+                    self.world.add_block(tx, ty, tz, block_id, layer=layer)
+                    self.world.record_edit(tx, ty, tz)
                     self.world.rebuild_around(tx, tz)
 
         if self.ui.crosshair.enabled != active:

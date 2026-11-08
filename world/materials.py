@@ -65,6 +65,21 @@ SURFACE_FILES = {
         'side': 'bricks.png',
         'bottom': 'bricks.png',
     },
+    'worldbox:clay.block': {
+        'top': 'clay.png',
+        'side': 'clay.png',
+        'bottom': 'clay.png',
+    },
+    'worldbox:stone_bricks.block': {
+        'top': 'stone_bricks.png',
+        'side': 'stone_bricks.png',
+        'bottom': 'stone_bricks.png',
+    },
+    'worldbox:stone_bricks_slab.block': {
+        'top': 'stone_bricks.png',
+        'side': 'stone_bricks.png',
+        'bottom': 'stone_bricks.png',
+    },
     'worldbox:end_stone.block': {
         'top': 'end_stone.png',
         'side': 'end_stone.png',
@@ -167,6 +182,8 @@ class BlockMaterials:
     def _make_item_mesh(self, block_id):
         top_uv = self.uvs[block_id]['top']
         side_uv = self.uvs[block_id]['side']
+        # 侧面贴图上下翻转：草方块等方块的草边要朝上
+        side_uv = (side_uv[0], side_uv[3], side_uv[2], side_uv[1])
         coordinates = (
             (-0.5, 0.25), (0.0, 0.5), (0.5, 0.25), (0.0, 0.0),      # 顶面
             (-0.5, 0.25), (0.0, 0.0), (0.0, -0.5), (-0.5, -0.25),   # 左面

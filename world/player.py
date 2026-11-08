@@ -43,19 +43,24 @@ class Player:
         camera.rotation_x = self.pitch
         camera.rotation_y = self.yaw
 
-    def overlaps(self, x, y, z, block_id=None):
+    def overlaps(self, x, y, z, block_id=None, layer=0):
         """判断方块是否与玩家 AABB 身体重叠，避免把自己封进方块里。
 
-        半砖只占格子的下半部分，因此站在半砖上时仍可以在同格放置。
+        半砖只占半格：下层占 [y, y+0.5]，上层占 [y+0.5, y+1]，
+        因此站在半砖上时仍可以在同格放置。
         """
         radius = config.PLAYER_RADIUS
         if not (x < self.pos.x + radius and x + 1 > self.pos.x - radius
                 and z < self.pos.z + radius and z + 1 > self.pos.z - radius):
             return False
-        height = SLAB_HEIGHT if is_slab(block_id) else 1.0
+        if layer == 1:
+            bottom, top = y + SLAB_HEIGHT, y + 1.0
+        else:
+            height = SLAB_HEIGHT if is_slab(block_id) else 1.0
+            bottom, top = y, y + height
         feet = self.pos.y
         head = self.pos.y + config.EYE_HEIGHT
-        return (y + height) > feet + 0.05 and y < head - 0.05
+        return top > feet + 0.05 and bottom < head - 0.05
 
     def update(self, keys, just_pressed, dt):
         # --- 鼠标视角 ---
@@ -123,10 +128,11 @@ class Player:
                 elif (self.grounded and not sneak_blocked and blocked_top is not None
                       and config.AUTO_JUMP
                       and blocked_top - self.pos.y <= config.AUTO_JUMP_HEIGHT + 0.01):
-                    # 半砖 / 1 格台阶：真实抛物线起跳跨过去（不瞬移）
+                    # 按实际台阶高度起跳：半砖跳半格、整块跳一格
+                    step = max(0.05, blocked_top - self.pos.y)
                     self.velocity_y = max(
-                        config.JUMP_SPEED,
-                        math.sqrt(2 * config.GRAVITY * 1.25))
+                        3.0,
+                        math.sqrt(2 * config.GRAVITY * (step + 0.25)))
                     self.grounded = False
                     self.pos.x, self.pos.z = next_x, next_z
                 else:
