@@ -1012,7 +1012,8 @@ class GameUI:
         self.menu_hint.text = i18n.t('menu.hint')
         self.menu_labels = (i18n.t('menu.resume'), i18n.t('menu.settings'),
                             i18n.t('menu.packs'), i18n.t('menu.keybinds'),
-                            i18n.t('menu.save'), i18n.t('menu.save_quit'))
+                            i18n.t('menu.save'), i18n.t('menu.save_quit'),
+                            i18n.t('menu.quit_to_title'))
         for button, label in zip(self.menu_buttons, self.menu_labels):
             button.text = label
         self.refresh_menu_highlight()

@@ -1,6 +1,8 @@
 # 游戏存档 / 运行时数据
 world_save.json
 world_save.json.*
+# 多存档目录（运行时用户存档，不入库）
+saves/
 *.log
 
 # 本地配置（含旧布局根目录位置；config/blocks.json 是方块表，需要入库）
