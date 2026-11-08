@@ -74,16 +74,15 @@ class VoxelWorld:
         return changed
 
     def can_place(self, x, y, z, layer, block_id):
-        """目标位置能否放置：上层要求下层不是整块，下层要求上层为空。"""
+        """目标位置能否放置：上层要求下层不是整块，下层要求整格为空。"""
         key = (x, y, z)
         if layer == 1:
             lower = self.world_blocks.get(key)
             if lower is not None and not is_slab(lower):
                 return False
             return self.world_uppers.get(key) is None
-        if self.world_uppers.get(key) is not None:
-            return False
-        return True
+        return (self.world_blocks.get(key) is None
+                and self.world_uppers.get(key) is None)
 
     def record_edit(self, x, y, z):
         """记录玩家改动（存档用）。"""
@@ -199,10 +198,14 @@ class VoxelWorld:
                 uv_set = self.materials.uvs.get(block_id,
                                                 self.materials.uvs[DEFAULT_BLOCK_ID])
 
-                def add_face(corners, shade, face_key):
+                def add_face(corners, shade, face_key, v_range=None):
                     start = len(vertices)
                     factor = shade * checker
                     u0, v0, u1, v1 = uv_set[face_key]
+                    if v_range is not None:
+                        # 竖直方向裁剪（半砖取贴图下半、整块上半段取上半），
+                        # 而不是把整张贴图压扁
+                        v0, v1 = v_range
                     face_uv = ((u0, v0), (u0, v1), (u1, v1), (u1, v0))
                     for (vx, vy, vz), (uu, vv) in zip(corners, face_uv):
                         vertices.append((vx, vy, vz))
@@ -222,6 +225,8 @@ class VoxelWorld:
                               (x + 1, y0, z), (x, y0, z)), 0.45, 'bottom')
 
                 # 侧面：按 0.5 细分，邻居完全遮住的段不画
+                side_u0, side_v0, side_u1, side_v1 = uv_set['side']
+                side_dv = side_v1 - side_v0
                 for (dx, dz, shade) in SIDE_DIRECTIONS:
                     low = y0
                     while low < y1 - 1e-6:
@@ -239,7 +244,11 @@ class VoxelWorld:
                             else:
                                 corners = ((x + 1, low, z), (x + 1, high, z),
                                            (x, high, z), (x, low, z))
-                            add_face(corners, shade, 'side')
+                            # 贴图按整格高度裁剪：段占格内 [a, b] → 取对应纵向区间
+                            v_low = side_v0 + side_dv * (low - y)
+                            v_high = side_v0 + side_dv * (high - y)
+                            add_face(corners, shade, 'side',
+                                     v_range=(v_low, v_high))
                         low = high
 
         return Mesh(vertices=vertices, triangles=triangles, colors=colors, uvs=uvs,
@@ -285,8 +294,35 @@ class VoxelWorld:
             entity.color = tint
 
     # ---------- 查询 ----------
+    @staticmethod
+    def _segment_hit(oy, dy, y0, y1, t_enter, t_exit):
+        """射线与竖直段 [y0, y1] 的交点。
+
+        返回 (进入时间, 命中高度)；这段没被射线穿过则返回 (None, None)。
+        命中高度取"射线先碰到的那一面"：向下射线碰到段顶，向上射线碰到段底。
+        """
+        if dy > 1e-9:
+            t_in, t_out = (y0 - oy) / dy, (y1 - oy) / dy
+            hit_y = y0
+        elif dy < -1e-9:
+            t_in, t_out = (y1 - oy) / dy, (y0 - oy) / dy
+            hit_y = y1
+        else:
+            if y0 - 1e-6 <= oy <= y1 + 1e-6:
+                return t_exit, oy          # 水平射线穿过该段（命中侧面）
+            return None, None
+        if t_out < t_enter - 1e-6 or t_in > t_exit + 1e-6:
+            return None, None
+        if t_in < t_enter - 1e-6:
+            # 进入该格时已经在段内部：命中迎面那一面
+            return t_enter, (y1 if dy < 0 else y0)
+        return t_in, hit_y
+
     def raycast(self, origin, direction, max_distance):
-        """体素 DDA：返回 (命中方块坐标, 进入面法线, 命中高度)，未命中返回 None。"""
+        """体素 DDA：返回 (命中方块坐标, 命中面法线, 命中高度)，未命中返回 None。
+
+        命中高度是实体真实表面（半砖顶面在 y+0.5），用于判断放置到哪一层。
+        """
         length = math.sqrt(direction[0] ** 2 + direction[1] ** 2 + direction[2] ** 2)
         if length == 0:
             return None
@@ -306,26 +342,36 @@ class VoxelWorld:
         t_max_z = ((z + 1 - origin[2]) / dz) if dz > 0 else (((z - origin[2]) / dz) if dz < 0 else inf)
 
         normal = (0, 0, 0)
-        distance = 0.0
+        t_enter = 0.0
+        t_exit = min(t_max_x, t_max_y, t_max_z)
         for _ in range(128):
-            if distance > max_distance:
+            if t_enter > max_distance:
                 break
-            if self.segments(x, y, z):
-                hit_y = origin[1] + dy * distance
-                return (x, y, z), normal, hit_y
+            for (y0, y1, _bid) in self.segments(x, y, z):
+                t_in, hit_y = self._segment_hit(origin[1], dy, y0, y1,
+                                               t_enter, t_exit)
+                if t_in is None:
+                    continue
+                if dy < -1e-9:
+                    face_normal = (0, 1, 0)      # 向下射线：命中顶面
+                elif dy > 1e-9:
+                    face_normal = (0, -1, 0)     # 向上射线：命中底面
+                else:
+                    face_normal = normal        # 水平射线：命中侧面
+                return (x, y, z), face_normal, hit_y
             if t_max_x < t_max_y and t_max_x < t_max_z:
                 x += step_x
-                distance = t_max_x
+                t_enter, t_exit = t_max_x, t_max_x + t_delta_x
                 t_max_x += t_delta_x
                 normal = (-step_x, 0, 0)
             elif t_max_y < t_max_z:
                 y += step_y
-                distance = t_max_y
+                t_enter, t_exit = t_max_y, t_max_y + t_delta_y
                 t_max_y += t_delta_y
                 normal = (0, -step_y, 0)
             else:
                 z += step_z
-                distance = t_max_z
+                t_enter, t_exit = t_max_z, t_max_z + t_delta_z
                 t_max_z += t_delta_z
                 normal = (0, 0, -step_z)
         return None

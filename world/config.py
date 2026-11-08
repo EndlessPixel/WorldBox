@@ -141,6 +141,8 @@ REACH_DISTANCE    = 6.0     # 挖掘/放置距离（米）
 
 EYE_HEIGHT        = 1.75    # 站立眼高（米）
 CROUCH_EYE_HEIGHT = 1.00    # 蹲下眼高（米）
+PLAYER_HEIGHT    = 1.75    # 站立碰撞高度（米）
+CROUCH_HEIGHT    = 1.40    # 蹲下碰撞高度：能钻进 1.5 格高的空间
 WALK_SPEED        = 6.0     # 走路速度 m/s
 SPRINT_SPEED      = 9.5     # 疾跑速度 m/s（按住 Ctrl）
 CROUCH_SPEED      = 2.5     # 蹲行速度 m/s
@@ -157,8 +159,9 @@ DAY_LENGTH        = 180.0   # 一昼夜时长（秒）
 START_DAY_TIME    = 0.35    # 0=午夜, 0.25=日出, 0.5=正午, 0.75=日落
 
 HOTBAR_SLOTS      = 9       # 快捷栏格数
-INVENTORY_COLS    = 9       # 背包列数
-INVENTORY_ROWS    = 3       # 背包行数（3x9）
+INVENTORY_COLS    = 5       # 创造背包列数（每页）
+INVENTORY_ROWS    = 2       # 创造背包行数（每页）
+INVENTORY_PAGE_SIZE = INVENTORY_COLS * INVENTORY_ROWS   # 每页方块数
 SLOT_SIZE         = 0.052   # UI 格子边长（屏幕比例）
 SLOT_GAP          = 0.006   # 格子间距
 # ===========================================

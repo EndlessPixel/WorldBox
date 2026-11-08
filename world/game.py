@@ -103,9 +103,7 @@ class Game:
     def _drop_item(self):
         """丢弃：先丢手上的物品，否则清空当前快捷栏格。"""
         if self.ui.held_item is not None:
-            self.ui.held_item = None
-            for icon in self.ui.held_icons.values():
-                icon.enabled = False
+            self.ui.clear_held()
         elif self.ui.hotbar[self.ui.selected_slot] is not None:
             self.ui.hotbar[self.ui.selected_slot] = None
             self.ui.refresh_hotbar()
@@ -313,28 +311,41 @@ class Game:
 
         # --- 背包打开：暂停移动，方向键选择、回车放入快捷栏 ---
         if self.ui.inventory_open:
+            page_size = config.INVENTORY_PAGE_SIZE
+            page_items = self.ui.inventory_page_items()
             moved = False
             if 'left' in just_pressed:
-                self.ui.inv_selected = (self.ui.inv_selected - 1) % len(self.ui.inventory)
+                self.ui.inv_selected = (self.ui.inv_selected - 1) % max(1, len(page_items))
                 moved = True
             if 'right' in just_pressed:
-                self.ui.inv_selected = (self.ui.inv_selected + 1) % len(self.ui.inventory)
+                self.ui.inv_selected = (self.ui.inv_selected + 1) % max(1, len(page_items))
                 moved = True
             if 'up' in just_pressed:
                 self.ui.inv_selected = (
-                    self.ui.inv_selected - config.INVENTORY_COLS) % len(self.ui.inventory)
+                    self.ui.inv_selected - config.INVENTORY_COLS) % max(1, len(page_items))
                 moved = True
             if 'down' in just_pressed:
                 self.ui.inv_selected = (
-                    self.ui.inv_selected + config.INVENTORY_COLS) % len(self.ui.inventory)
+                    self.ui.inv_selected + config.INVENTORY_COLS) % max(1, len(page_items))
+                moved = True
+            if 'page_up' in just_pressed or 'page_down' in just_pressed:
+                self.ui.turn_inventory_page(-1 if 'page_up' in just_pressed else 1)
                 moved = True
             if moved:
                 self.ui.refresh_inventory()
             if 'enter' in just_pressed:
-                # 手上有物品时优先用它替换当前快捷栏格，否则取高亮的背包格
-                block_id = self.ui.held_item or self.ui.inventory[self.ui.inv_selected]
-                if block_id is not None:
-                    self.ui.hotbar[self.ui.selected_slot] = block_id
+                # 手上有物品时优先用它替换当前快捷栏格，否则取高亮的创造背包格
+                picked = (self.ui.held_item
+                          or (page_items[self.ui.inv_selected]
+                              if self.ui.inv_selected < len(page_items) else None))
+                if picked is not None:
+                    old = self.ui.hotbar[self.ui.selected_slot]
+                    self.ui.hotbar[self.ui.selected_slot] = picked
+                    if self.ui.held_item is not None:
+                        # 交换：手上换成被替换掉的物品，避免丢失
+                        self.ui.held_item = old
+                        self.ui.held_from = (self.ui.selected_slot
+                                             if old is not None else None)
                     self.ui.refresh_hotbar()
             for i in range(config.HOTBAR_SLOTS):
                 if str(i + 1) in just_pressed:

@@ -23,6 +23,7 @@ class Player:
         self.bob_amount = 0.0
         self.current_speed = 0.0
         self.crouching = False
+        self.body_height = config.PLAYER_HEIGHT   # 当前碰撞高度（蹲下时降低）
         self.sprinting = False
         self.zooming = False
         self.moving = False
@@ -59,7 +60,7 @@ class Player:
             height = SLAB_HEIGHT if is_slab(block_id) else 1.0
             bottom, top = y, y + height
         feet = self.pos.y
-        head = self.pos.y + config.EYE_HEIGHT
+        head = self.pos.y + self.body_height
         return top > feet + 0.05 and bottom < head - 0.05
 
     def update(self, keys, just_pressed, dt):
@@ -73,6 +74,9 @@ class Player:
 
         # --- 蹲下 / 疾跑 / 跳跃（上升沿） ---
         self.crouching = 'shift' in keys
+        # 蹲下时碰撞高度降低，可以钻进 1.5 格高的空间
+        self.body_height = (config.CROUCH_HEIGHT if self.crouching
+                            else config.PLAYER_HEIGHT)
         self.sprinting = 'ctrl' in keys and not self.crouching
         if 'space' in just_pressed and self.grounded:
             self.velocity_y = config.JUMP_SPEED
@@ -113,7 +117,7 @@ class Player:
 
                 # 阻挡检测：玩家身体竖直区间与 AABB 内方块是否重叠
                 blocked_top = self.world.body_overlap_top(
-                    next_x, next_z, self.pos.y, config.EYE_HEIGHT,
+                    next_x, next_z, self.pos.y, self.body_height,
                     config.PLAYER_RADIUS)
 
                 # 潜行（Shift）：脚下 AABB 全部失去支撑时不许迈出去

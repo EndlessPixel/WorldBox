@@ -182,8 +182,6 @@ class BlockMaterials:
     def _make_item_mesh(self, block_id):
         top_uv = self.uvs[block_id]['top']
         side_uv = self.uvs[block_id]['side']
-        # 侧面贴图上下翻转：草方块等方块的草边要朝上
-        side_uv = (side_uv[0], side_uv[3], side_uv[2], side_uv[1])
         coordinates = (
             (-0.5, 0.25), (0.0, 0.5), (0.5, 0.25), (0.0, 0.0),      # 顶面
             (-0.5, 0.25), (0.0, 0.0), (0.0, -0.5), (-0.5, -0.25),   # 左面
@@ -198,7 +196,16 @@ class BlockMaterials:
             (4, 5, 6), (4, 6, 7),
             (8, 9, 10), (8, 10, 11),
         )
-        uvs = self._quad_uv(top_uv) + self._quad_uv(side_uv) + self._quad_uv(side_uv)
+        u0, v0, u1, v1 = side_uv
+        if is_slab(block_id):
+            # 半砖只占下半格：侧面裁剪贴图下半，不是把整张贴图压扁
+            v1 = v0 + (v1 - v0) * 0.5
+        # 侧面是竖直平行四边形：两条竖直边对应贴图上下（v），
+        # 两条斜边对应贴图左右（u），草边等才会水平位于侧面顶部
+        left_uv = ((u0, v1), (u1, v1), (u1, v0), (u0, v0))
+        # 右面从另一侧看，u 方向相反（前棱为 u0、后棱为 u1）
+        right_uv = ((u1, v1), (u0, v1), (u0, v0), (u1, v0))
+        uvs = self._quad_uv(top_uv) + list(left_uv) + list(right_uv)
         colors = []
         for factor in (1.0, 0.78, 0.6):   # 顶亮、左中、右暗
             colors.extend([(factor, factor, factor, 1.0)] * 4)
