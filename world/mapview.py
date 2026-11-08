@@ -34,15 +34,15 @@ class WorldMap:
 
     # ---------- 色块网格 ----------
     def _cell_color(self, x, z):
-        top = self.world.ground_height_at(x + .5, z + .5)
-        block_id = self.world.world_blocks.get((x, top - 1, z))
+        top, block_id = self.world.top_block_at(x, z)
         rgb = BLOCKS.get(block_id, {}).get('color', (60, 60, 60))
         # 棋盘微调 + 高度明暗：挖低的列更暗、堆高的列更亮，纯用 color 表现地形
         shade = .94 if (x + z) % 2 else 1.0
-        if top < 0:
-            shade *= max(.45, 1 + top * .08)
-        elif top > 0:
-            shade *= min(1.2, 1 + top * .03)
+        if top is not None:
+            if top < 0:
+                shade *= max(.45, 1 + top * .08)
+            elif top > 0:
+                shade *= min(1.2, 1 + top * .03)
         return (min(1.0, rgb[0] / 255 * shade),
                 min(1.0, rgb[1] / 255 * shade),
                 min(1.0, rgb[2] / 255 * shade), 1)

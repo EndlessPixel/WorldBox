@@ -5,15 +5,26 @@ import json
 from . import config
 
 DEFAULT_BLOCK_ID = 'worldbox:grass.block'
+SLAB_HEIGHT = 0.5      # 半砖高度（米）
+
+
+def is_slab(block_id):
+    """判断是否半砖：ID 以 _slab 结尾，例如 worldbox:stone_slab.block。"""
+    return isinstance(block_id, str) and block_id.endswith('_slab.block')
+
 
 DEFAULT_BLOCKS = (
     {'id': 'worldbox:grass.block',      'name': 'Grass',      'color': (92, 172, 78)  },
     {'id': 'worldbox:dirt.block',       'name': 'Dirt',       'color': (134, 96, 67)  },
     {'id': 'worldbox:stone.block',      'name': 'Stone',      'color': (128, 128, 128)},
+    {'id': 'worldbox:stone_slab.block', 'name': 'Stone Slab', 'color': (128, 128, 128)},
     {'id': 'worldbox:cobblestone.block','name': 'Cobblestone','color': [100, 100, 100]},
-    {"id": 'worldbox:bedrock.block',    'name': 'Bedrock',    'color': [90, 90, 90]   },
-    {'id': 'worldbox:obsidian.block',   'name': 'Obsidian',   'color': (26, 22, 38)   },
+    {'id': 'worldbox:cobblestone_slab.block', 'name': 'Cobblestone Slab',
+     'color': [100, 100, 100]},
     {'id': 'worldbox:bricks.block',     'name': 'Bricks',     'color': (156, 83, 62)  },
+    {'id': 'worldbox:bricks_slab.block','name': 'Bricks Slab','color': (156, 83, 62)  },
+    {'id': 'worldbox:obsidian.block',   'name': 'Obsidian',   'color': (26, 22, 38)   },
+    {'id': 'worldbox:bedrock.block',    'name': 'Bedrock',    'color': (90, 90, 90)   },
     {'id': 'worldbox:end_stone.block',  'name': 'End Stone',  'color': (219, 213, 161)}
 )
 

@@ -374,7 +374,7 @@ class Game:
                         and 0 <= tx < config.WORLD_SIZE and 0 <= tz < config.WORLD_SIZE
                         and config.MIN_BLOCK_Y <= ty < config.MAX_BLOCK_Y
                         and (tx, ty, tz) not in self.world.world_blocks
-                        and not self.player.overlaps(tx, ty, tz)):
+                        and not self.player.overlaps(tx, ty, tz, block_id)):
                     self.world.add_block(tx, ty, tz, block_id)
                     self.world.world_edits[(tx, ty, tz)] = block_id
                     self.world.rebuild_around(tx, tz)

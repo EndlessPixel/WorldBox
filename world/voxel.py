@@ -1,23 +1,25 @@
-"""体素世界：方块数据、区块网格、射线与地面查询。"""
+"""体素世界：方块数据、区块网格、射线与地面查询。
+
+方块可以是整块（高 1 米）或半砖（高 0.5 米，ID 以 _slab 结尾）：
+渲染、碰撞与支撑高度都按方块的实际高度计算。
+"""
 
 import math
 
 from ursina import Entity, Mesh, color, destroy
 
 from . import config
-from .blocks import BLOCKS, DEFAULT_BLOCK_ID
+from .blocks import BLOCKS, DEFAULT_BLOCK_ID, SLAB_HEIGHT, is_slab
 from .materials import BlockMaterials
 
 SUPPORT_TOLERANCE = 0.05   # 脚部允许与支撑面相差的高度（米）
 
-# 六个面：邻接方向、4 个顶点偏移、明暗系数
-FACES = (
-    (( 0,  1,  0), ((0, 1, 0), (0, 1, 1), (1, 1, 1), (1, 1, 0)), 1.00),  # 顶
-    (( 0, -1,  0), ((0, 0, 1), (1, 0, 1), (1, 0, 0), (0, 0, 0)), 0.45),  # 底
-    (( 1,  0,  0), ((1, 0, 1), (1, 1, 1), (1, 1, 0), (1, 0, 0)), 0.80),  # +X
-    ((-1,  0,  0), ((0, 0, 0), (0, 1, 0), (0, 1, 1), (0, 0, 1)), 0.80),  # -X
-    (( 0,  0,  1), ((0, 0, 1), (0, 1, 1), (1, 1, 1), (1, 0, 1)), 0.70),  # +Z
-    (( 0,  0, -1), ((1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 0)), 0.70),  # -Z
+# 侧面方向：(dx, dz, 明暗系数)
+SIDE_DIRECTIONS = (
+    (1, 0, 0.80),
+    (-1, 0, 0.80),
+    (0, 1, 0.70),
+    (0, -1, 0.70),
 )
 
 
@@ -83,8 +85,26 @@ class VoxelWorld:
             self.world_edits[(x, y, z)] = block_id
 
     # ---------- 网格 ----------
+    def block_top(self, x, y, z):
+        """该格方块的顶面高度（半砖 0.5 / 整块 1.0）；没有方块返回 None。"""
+        block_id = self.world_blocks.get((x, y, z))
+        if block_id is None:
+            return None
+        return y + (SLAB_HEIGHT if is_slab(block_id) else 1.0)
+
+    def top_block_at(self, x, z):
+        """该列最高的方块 (y, block_id)；空列返回 (None, None)。"""
+        for y in range(config.MAX_BLOCK_Y - 1, config.MIN_BLOCK_Y - 1, -1):
+            block_id = self.world_blocks.get((x, y, z))
+            if block_id is not None:
+                return y, block_id
+        return None, None
+
     def build_chunk_mesh(self, cx, cz):
-        """把一个区块里所有暴露面合并成一个 Mesh（顶点颜色 + 方块表颜色）。"""
+        """把一个区块里所有暴露面合并成一个 Mesh（顶点颜色 + 方块表颜色）。
+
+        半砖只占格子下半部分：顶面在 y+0.5，侧面按邻居高度决定画哪一段。
+        """
         vertices, triangles, colors, uvs = [], [], [], []
         for (x, y, z) in self.chunk_blocks.get((cx, cz), ()):
             block_id = self.world_blocks.get((x, y, z))
@@ -92,21 +112,64 @@ class VoxelWorld:
                 continue
             uv_set = self.materials.uvs.get(block_id, self.materials.uvs[DEFAULT_BLOCK_ID])
             checker = 1.0 if (x + z) % 2 == 0 else 0.94   # 棋盘微调，方便看出 1 米格
-            for (nx, ny, nz), corners, shade in FACES:
-                if ny == -1 and y == config.MIN_BLOCK_Y:
-                    continue                               # 世界最底层不生成底面
-                if (x + nx, y + ny, z + nz) in self.world_blocks:
-                    continue                               # 相邻方块遮挡，跳过该面
+            y_bottom = y
+            y_top = y + (SLAB_HEIGHT if is_slab(block_id) else 1.0)
+
+            def add_face(corners, shade, face_key):
                 start = len(vertices)
                 factor = shade * checker
-                face = 'top' if ny == 1 else ('bottom' if ny == -1 else 'side')
-                u0, v0, u1, v1 = uv_set[face]
+                u0, v0, u1, v1 = uv_set[face_key]
                 face_uv = ((u0, v0), (u0, v1), (u1, v1), (u1, v0))
-                for (ox, oy, oz), (uu, vv) in zip(corners, face_uv):
-                    vertices.append((x + ox, y + oy, z + oz))
+                for (vx, vy, vz), (uu, vv) in zip(corners, face_uv):
+                    vertices.append((vx, vy, vz))
                     colors.append((factor, factor, factor, 1.0))
                     uvs.append((uu, vv))
                 triangles.extend(((start, start + 1, start + 2), (start, start + 2, start + 3)))
+
+            # 顶面：被上方方块覆盖时不可见
+            above = self.world_blocks.get((x, y + 1, z))
+            covered = False
+            if above is not None:
+                above_bottom = y + 1
+                above_top = above_bottom + (SLAB_HEIGHT if is_slab(above) else 1.0)
+                covered = (above_bottom - 1e-6 <= y_top <= above_top + 1e-6)
+            if not covered:
+                add_face(((x, y_top, z), (x, y_top, z + 1),
+                          (x + 1, y_top, z + 1), (x + 1, y_top, z)), 1.00, 'top')
+
+            # 底面：下方方块顶面高于本格底部时不可见
+            if y > config.MIN_BLOCK_Y:
+                below_top = self.block_top(x, y - 1, z)
+                if below_top is None or below_top < y_bottom - 1e-6:
+                    add_face(((x, y_bottom, z + 1), (x + 1, y_bottom, z + 1),
+                              (x + 1, y_bottom, z), (x, y_bottom, z)), 0.45, 'bottom')
+
+            # 四个侧面：邻居整块挡住全侧，邻居半砖只挡住下半段
+            for (dx, dz, shade) in SIDE_DIRECTIONS:
+                neighbour = self.world_blocks.get((x + dx, y, z + dz))
+                if neighbour is None:
+                    seg_bottom, seg_top = y_bottom, y_top
+                else:
+                    neighbour_top = y + (SLAB_HEIGHT if is_slab(neighbour) else 1.0)
+                    if neighbour_top >= y_top - 1e-6:
+                        continue        # 完全被遮挡
+                    seg_bottom, seg_top = max(y_bottom, neighbour_top), y_top
+                if seg_top - seg_bottom <= 1e-6:
+                    continue
+                if dx == 1:
+                    corners = ((x + 1, seg_bottom, z + 1), (x + 1, seg_top, z + 1),
+                               (x + 1, seg_top, z), (x + 1, seg_bottom, z))
+                elif dx == -1:
+                    corners = ((x, seg_bottom, z), (x, seg_top, z),
+                               (x, seg_top, z + 1), (x, seg_bottom, z + 1))
+                elif dz == 1:
+                    corners = ((x, seg_bottom, z + 1), (x, seg_top, z + 1),
+                               (x + 1, seg_top, z + 1), (x + 1, seg_bottom, z + 1))
+                else:
+                    corners = ((x + 1, seg_bottom, z), (x + 1, seg_top, z),
+                               (x, seg_top, z), (x, seg_bottom, z))
+                add_face(corners, shade, 'side')
+
         return Mesh(vertices=vertices, triangles=triangles, colors=colors, uvs=uvs, mode='triangle')
 
     def rebuild_chunk(self, cx, cz):
@@ -200,23 +263,28 @@ class VoxelWorld:
                 yield cx, cz
 
     def ground_height_at(self, x, z, feet_y=None):
-        """单列的支撑面高度。
+        """单列的支撑面高度（半砖顶面为 y+0.5）。
 
         传 feet_y 时只返回脚部附近（+SUPPORT_TOLERANCE）的方块顶面，
         这样站在悬空方块（如 2 格高的洞顶）下面时不会被吸附到洞顶上；
-        不传时保持旧行为（整列最高方块顶面），供地图/出生点使用。
+        不传时返回整列最高方块顶面，供地图/出生点使用。
         """
         ix, iz = math.floor(x), math.floor(z)
         if feet_y is None:
             for y in range(config.MAX_BLOCK_Y - 1, config.MIN_BLOCK_Y - 1, -1):
-                if (ix, y, iz) in self.world_blocks:
-                    return y + 1
+                block_id = self.world_blocks.get((ix, y, iz))
+                if block_id is not None:
+                    return y + (SLAB_HEIGHT if is_slab(block_id) else 1.0)
             return config.FALL_LIMIT_Y
         top = min(config.MAX_BLOCK_Y - 1,
                   math.floor(feet_y + SUPPORT_TOLERANCE))
         for y in range(top, config.MIN_BLOCK_Y - 1, -1):
-            if (ix, y, iz) in self.world_blocks and y + 1 <= feet_y + SUPPORT_TOLERANCE:
-                return y + 1
+            block_id = self.world_blocks.get((ix, y, iz))
+            if block_id is None:
+                continue
+            block_top = y + (SLAB_HEIGHT if is_slab(block_id) else 1.0)
+            if block_top <= feet_y + SUPPORT_TOLERANCE:
+                return block_top
         return config.FALL_LIMIT_Y
 
     def support_height_at(self, x, z, feet_y, radius):
@@ -233,12 +301,25 @@ class VoxelWorld:
                 best = height
         return best
 
-    def body_clearance(self, x, z, feet_cell, radius):
-        """AABB 范围内脚部/头部两格是否被方块占据，返回 (脚, 头)。"""
-        foot = head = False
+    def body_overlap_top(self, x, z, feet_y, height, radius):
+        """AABB 范围内与身体竖直区间重叠的方块里最高的顶面；没有则返回 None。
+
+        脚下的方块（顶面不高于脚部）不算重叠，因此站在半砖上不会被自己挡住。
+        """
+        bottom_limit = math.floor(feet_y + 0.001)
+        top_limit = math.ceil(feet_y + height - 0.001)
+        highest = None
         for cx, cz in self.columns(x, z, radius):
-            foot = foot or (cx, feet_cell, cz) in self.world_blocks
-            head = head or (cx, feet_cell + 1, cz) in self.world_blocks
-            if foot and head:
-                break
-        return foot, head
+            for cy in range(bottom_limit, top_limit + 1):
+                block_id = self.world_blocks.get((cx, cy, cz))
+                if block_id is None:
+                    continue
+                block_bottom = cy
+                block_top = cy + (SLAB_HEIGHT if is_slab(block_id) else 1.0)
+                if block_top <= feet_y + SUPPORT_TOLERANCE:
+                    continue                       # 已经踩在脚下的方块
+                if block_bottom >= feet_y + height - SUPPORT_TOLERANCE:
+                    continue                       # 高过头顶，不算撞到
+                if highest is None or block_top > highest:
+                    highest = block_top
+        return highest

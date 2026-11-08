@@ -9,7 +9,7 @@ from PIL import Image
 from ursina import Mesh, Texture
 
 from . import config
-from .blocks import BLOCK_IDS, BLOCKS, DEFAULT_BLOCK_ID
+from .blocks import BLOCK_IDS, BLOCKS, DEFAULT_BLOCK_ID, is_slab
 
 TILE = 16
 GRASS_TINT = (0.62, 1.10, 0.48)
@@ -30,7 +30,17 @@ SURFACE_FILES = {
         'side': 'stone.png',
         'bottom': 'stone.png',
     },
+    'worldbox:stone_slab.block': {
+        'top': 'stone.png',
+        'side': 'stone.png',
+        'bottom': 'stone.png',
+    },
     'worldbox:cobblestone.block': {
+        'top': 'cobblestone.png',
+        'side': 'cobblestone.png',
+        'bottom': 'cobblestone.png',
+    },
+    'worldbox:cobblestone_slab.block': {
         'top': 'cobblestone.png',
         'side': 'cobblestone.png',
         'bottom': 'cobblestone.png',
@@ -46,6 +56,11 @@ SURFACE_FILES = {
         'bottom': 'obsidian.png',
     },
     'worldbox:bricks.block': {
+        'top': 'bricks.png',
+        'side': 'bricks.png',
+        'bottom': 'bricks.png',
+    },
+    'worldbox:bricks_slab.block': {
         'top': 'bricks.png',
         'side': 'bricks.png',
         'bottom': 'bricks.png',
@@ -158,6 +173,9 @@ class BlockMaterials:
             (0.5, 0.25), (0.0, 0.0), (0.0, -0.5), (0.5, -0.25),     # 右面
         )
         vertices = [(x, y, 0) for x, y in coordinates]
+        if is_slab(block_id):
+            # 半砖图标压扁一半高度
+            vertices = [(x, y * 0.5, z) for x, y, z in vertices]
         triangles = (
             (0, 1, 2), (0, 2, 3),
             (4, 5, 6), (4, 6, 7),

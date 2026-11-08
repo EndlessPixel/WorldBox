@@ -5,6 +5,7 @@ import math
 from ursina import Vec3, camera, mouse
 
 from . import config, i18n
+from .blocks import SLAB_HEIGHT, is_slab
 from .storage import _save_number
 
 
@@ -42,15 +43,19 @@ class Player:
         camera.rotation_x = self.pitch
         camera.rotation_y = self.yaw
 
-    def overlaps(self, x, y, z):
-        """判断方块是否与玩家 AABB 身体重叠，避免把自己封进方块里。"""
+    def overlaps(self, x, y, z, block_id=None):
+        """判断方块是否与玩家 AABB 身体重叠，避免把自己封进方块里。
+
+        半砖只占格子的下半部分，因此站在半砖上时仍可以在同格放置。
+        """
         radius = config.PLAYER_RADIUS
         if not (x < self.pos.x + radius and x + 1 > self.pos.x - radius
                 and z < self.pos.z + radius and z + 1 > self.pos.z - radius):
             return False
-        feet = math.floor(self.pos.y + 0.001)
-        head = math.floor(self.pos.y + self.current_eye - 0.001)
-        return feet <= y <= head
+        height = SLAB_HEIGHT if is_slab(block_id) else 1.0
+        feet = self.pos.y
+        head = self.pos.y + config.EYE_HEIGHT
+        return (y + height) > feet + 0.05 and y < head - 0.05
 
     def update(self, keys, just_pressed, dt):
         # --- 鼠标视角 ---
@@ -101,10 +106,10 @@ class Player:
                              min(config.WORLD_SIZE - config.PLAYER_RADIUS,
                                  self.pos.z + step_z))
 
-                # 台阶/阻挡检测：按玩家 AABB 覆盖的所有列判断脚部/头部格
-                feet_cell = math.floor(self.pos.y + 0.001)
-                foot_solid, head_solid = self.world.body_clearance(
-                    next_x, next_z, feet_cell, config.PLAYER_RADIUS)
+                # 阻挡检测：玩家身体竖直区间与 AABB 内方块是否重叠
+                blocked_top = self.world.body_overlap_top(
+                    next_x, next_z, self.pos.y, config.EYE_HEIGHT,
+                    config.PLAYER_RADIUS)
 
                 # 潜行（Shift）：脚下 AABB 全部失去支撑时不许迈出去
                 sneak_blocked = False
@@ -113,11 +118,12 @@ class Player:
                         next_x, next_z, self.pos.y, config.PLAYER_RADIUS)
                     sneak_blocked = next_support < self.pos.y - 0.02
 
-                if not foot_solid and not head_solid and not sneak_blocked:
+                if blocked_top is None and not sneak_blocked:
                     self.pos.x, self.pos.z = next_x, next_z
-                elif (self.grounded and not head_solid and not sneak_blocked
-                      and config.AUTO_JUMP and config.AUTO_JUMP_HEIGHT >= 1.0):
-                    # 1 格台阶：真实抛物线起跳跨过去（不瞬移）
+                elif (self.grounded and not sneak_blocked and blocked_top is not None
+                      and config.AUTO_JUMP
+                      and blocked_top - self.pos.y <= config.AUTO_JUMP_HEIGHT + 0.01):
+                    # 半砖 / 1 格台阶：真实抛物线起跳跨过去（不瞬移）
                     self.velocity_y = max(
                         config.JUMP_SPEED,
                         math.sqrt(2 * config.GRAVITY * 1.25))

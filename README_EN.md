@@ -39,7 +39,7 @@ English · [简体中文](README.md)
 - **A real voxel world** — 128×128 m, rendered as merged 16×16 chunks with only exposed faces; digging and placing rebuilds just the affected chunks.
 - **Proper player volume** — AABB collision with separate foot and head checks; you keep standing while any corner of your body still rests on a block. Horizontal motion is split into ≤0.05 m substeps, so frame hitches can no longer tunnel you through walls.
 - **Sneak-safe edges** — holding `Shift` keeps you from walking off a ledge, and digging the floor from under you will not drop you either; releasing it restores gravity immediately.
-- **8 block types** — grass, dirt, stone, cobblestone, bedrock, obsidian, bricks and end stone, each with configurable colour and textures.
+- **11 block types, including slabs** — grass, dirt, stone, cobblestone, obsidian, bricks, end stone, bedrock, plus **stone / cobblestone / bricks slabs** (0.5 m tall, stackable into steps), each with configurable colour and textures.
 - **Resource pack system** — describe textures in a JSON manifest, let the game download them into their own namespace at runtime; browse, download and switch packs from inside the game.
 - **Fullscreen map (`M`)** — a 128×128 colour-block top-down view drawn from block colours, with a red marker for the player.
 - **Inventory & hotbar** — a 3×9 inventory plus a 9-slot hotbar: left click picks up or swaps, right click copies or replaces, hovering shows the name, ID and colour of an item.
