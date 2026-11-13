@@ -38,10 +38,10 @@ DEFAULT_BLOCKS = (
     {'id': 'worldbox:grass.block', 'name': 'Grass', 'color': (92, 172, 78),
      'textures': {'top': 'grass_block_top.png',
                   'side': 'grass_block_side.png',
-                  'bottom': 'coarse_dirt.png'}},
+                  'bottom': 'dirt.png'}},
     {'id': 'worldbox:dirt.block', 'name': 'Dirt', 'color': (134, 96, 67),
-     'textures': {'top': 'coarse_dirt.png', 'side': 'coarse_dirt.png',
-                  'bottom': 'coarse_dirt.png'}},
+     'textures': {'top': 'dirt.png', 'side': 'dirt.png',
+                  'bottom': 'dirt.png'}},
     {'id': 'worldbox:stone.block', 'name': 'Stone', 'color': (128, 128, 128)},
 )
 

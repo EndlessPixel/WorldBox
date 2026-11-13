@@ -366,7 +366,12 @@ class VoxelWorld:
     def rebuild_chunk(self, cx, cz):
         old = self.chunk_meshes.pop((cx, cz), None)
         if old is not None:
+            old_model = old.model
             destroy(old)
+            # 双保险：模型是独立 NodePath，若某些 Ursina 版本没随实体一起
+            # 移除，会和新网格重叠（表现为旧贴图残留、切换资源包时闪烁）。
+            if old_model is not None:
+                old_model.removeNode()
         mesh = self.build_chunk_mesh(cx, cz)
         if mesh.vertices:
             entity = Entity(model=mesh, texture=self.materials.texture)
@@ -390,6 +395,13 @@ class VoxelWorld:
             self.rebuild_chunk(_cx, _cz)
 
     def build_all(self):
+        # 先统一销毁旧网格再重建，避免资源包切换时新旧两套网格同帧并存
+        for entity in list(self.chunk_meshes.values()):
+            model = entity.model
+            destroy(entity)
+            if model is not None:
+                model.removeNode()
+        self.chunk_meshes.clear()
         for cx in range(self.chunks_per_axis):
             for cz in range(self.chunks_per_axis):
                 self.rebuild_chunk(cx, cz)
@@ -403,14 +415,18 @@ class VoxelWorld:
             entity.color = tint
 
     def destroy(self):
-        """退出到主页面时销毁所有区块实体。"""
-        for entity in self.chunk_meshes.values():
+        """退出到主页面时销毁所有区块实体与运行时数据。"""
+        for entity in list(self.chunk_meshes.values()):
+            model = entity.model
             destroy(entity)
+            if model is not None:
+                model.removeNode()
         self.chunk_meshes.clear()
         self.chunk_blocks.clear()
         self.world_blocks.clear()
         self.world_uppers.clear()
         self.world_edits.clear()
+        self.components = ComponentStore()
 
     # ---------- 查询 ----------
     @staticmethod

@@ -6,7 +6,7 @@
     "textures": {
       "top": "grass_block_top.png",
       "side": "grass_block_side.png",
-      "bottom": "coarse_dirt.png"
+      "bottom": "dirt.png"
     }
   },
   {
@@ -14,9 +14,9 @@
     "name": "Dirt",
     "color": [134, 96, 67],
     "textures": {
-      "top": "coarse_dirt.png",
-      "side": "coarse_dirt.png",
-      "bottom": "coarse_dirt.png"
+      "top": "dirt.png",
+      "side": "dirt.png",
+      "bottom": "dirt.png"
     }
   },
   {
@@ -173,7 +173,7 @@
     "shape": "slab"
   },
   {
-    "id": "worldbox:oak_planks.block",
+    "id": "worldbox:coarse_dirt.block","name": "Coarse Dirt","color": [134,96,67]},
     "name": "Oak Planks",
     "color": [162, 130, 78]
   },
