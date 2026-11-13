@@ -74,15 +74,22 @@ class VoxelWorld:
         return changed
 
     def can_place(self, x, y, z, layer, block_id):
-        """目标位置能否放置：上层要求下层不是整块，下层要求整格为空。"""
+        """目标位置能否放置。
+
+        上层：下层必须是空的或半砖、上层为空，且只能放半砖。
+        下层：下层必须为空；若上层已有半砖，只能再放半砖补成整格，
+        放整块会吞掉上层，所以禁止。
+        """
         key = (x, y, z)
+        lower = self.world_blocks.get(key)
+        upper = self.world_uppers.get(key)
         if layer == 1:
-            lower = self.world_blocks.get(key)
-            if lower is not None and not is_slab(lower):
+            if upper is not None or (lower is not None and not is_slab(lower)):
                 return False
-            return self.world_uppers.get(key) is None
-        return (self.world_blocks.get(key) is None
-                and self.world_uppers.get(key) is None)
+            return is_slab(block_id)
+        if lower is not None:
+            return False
+        return upper is None or is_slab(block_id)
 
     def record_edit(self, x, y, z):
         """记录玩家改动（存档用）。"""
@@ -421,10 +428,17 @@ class VoxelWorld:
         return None
 
     @staticmethod
-    def columns(x, z, radius):
-        """玩家 AABB 覆盖到的所有方块列。"""
-        for cx in range(math.floor(x - radius), math.floor(x + radius) + 1):
-            for cz in range(math.floor(z - radius), math.floor(z + radius) + 1):
+    def columns(x, z, radius, strict=False):
+        """玩家 AABB 覆盖到的所有方块列。
+
+        strict 用于阻挡检测：排除只与 AABB 边界相切的列，否则贴着
+        方块边缘走会被误判成撞墙。支撑检测保持宽容，站在边缘不会掉。
+        """
+        eps = 1e-6 if strict else 0.0
+        for cx in range(math.floor(x - radius + eps),
+                        math.floor(x + radius - eps) + 1):
+            for cz in range(math.floor(z - radius + eps),
+                            math.floor(z + radius - eps) + 1):
                 yield cx, cz
 
     def ground_height_at(self, x, z, feet_y=None):
@@ -471,7 +485,7 @@ class VoxelWorld:
         bottom_limit = math.floor(feet_y + 0.001)
         top_limit = math.ceil(feet_y + height - 0.001)
         highest = None
-        for cx, cz in self.columns(x, z, radius):
+        for cx, cz in self.columns(x, z, radius, strict=True):
             for cy in range(bottom_limit, top_limit + 1):
                 for (block_bottom, block_top, _) in self.segments(cx, cy, cz):
                     if block_top <= feet_y + SUPPORT_TOLERANCE:
