@@ -364,20 +364,36 @@ class VoxelWorld:
                     mode='triangle')
 
     def rebuild_chunk(self, cx, cz):
-        old = self.chunk_meshes.pop((cx, cz), None)
-        if old is not None:
-            old_model = old.model
-            destroy(old)
-            # 双保险：模型是独立 NodePath，若某些 Ursina 版本没随实体一起
-            # 移除，会和新网格重叠（表现为旧贴图残留、切换资源包时闪烁）。
-            if old_model is not None:
-                old_model.removeNode()
+        """重建一个区块网格。
+
+        复用已有的区块 Entity，只替换它的模型（Ursina 的 model setter 会先把旧
+        模型节点从场景图摘下），不再反复销毁/创建 Entity。这样既能避免挖掘/
+        放置时旧网格短暂残留，也消除了切换资源包时新旧两套网格同帧并存造成的
+        闪烁。换模型后必须重新关闭背面剔除（set_two_sided），否则新模型会因绕
+        序问题出现空洞；被替换下来的旧模型节点要 removeNode 释放，避免内存泄漏。
+        """
+        key = (cx, cz)
         mesh = self.build_chunk_mesh(cx, cz)
-        if mesh.vertices:
+        entity = self.chunk_meshes.get(key)
+        if not mesh.vertices:
+            # 没有任何暴露面：隐藏实体即可，不必销毁（避免反复建销闪烁）
+            if entity is not None:
+                entity.enabled = False
+            return
+        old_model = entity.model if entity is not None else None
+        if entity is None:
             entity = Entity(model=mesh, texture=self.materials.texture)
             entity.set_two_sided(True)   # 兜底：即使绕序偏差也不会出现空洞
             entity.color = self.block_tint
-            self.chunk_meshes[(cx, cz)] = entity
+            self.chunk_meshes[key] = entity
+        else:
+            entity.model = mesh            # 旧模型被摘下
+            entity.texture = self.materials.texture
+            entity.set_two_sided(True)     # 换模型后重新关闭背面剔除
+            entity.color = self.block_tint
+        if old_model is not None:
+            old_model.removeNode()         # 释放被替换下来的旧模型节点
+        entity.enabled = True
 
     def rebuild_around(self, x, z):
         """方块变化后重建所在区块；在区块边缘时连带重建相邻区块。"""
@@ -395,13 +411,9 @@ class VoxelWorld:
             self.rebuild_chunk(_cx, _cz)
 
     def build_all(self):
-        # 先统一销毁旧网格再重建，避免资源包切换时新旧两套网格同帧并存
-        for entity in list(self.chunk_meshes.values()):
-            model = entity.model
-            destroy(entity)
-            if model is not None:
-                model.removeNode()
-        self.chunk_meshes.clear()
+        # 复用已有区块 Entity 直接换模型（rebuild_chunk 内处理），避免销毁重建时
+        # 旧网格残留 / 资源包切换时新旧两套并存导致闪烁。首次构建时 chunk_meshes
+        # 为空，rebuild_chunk 会创建新 Entity；切换资源包时则原地换模型。
         for cx in range(self.chunks_per_axis):
             for cz in range(self.chunks_per_axis):
                 self.rebuild_chunk(cx, cz)

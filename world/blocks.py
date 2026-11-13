@@ -42,6 +42,10 @@ DEFAULT_BLOCKS = (
     {'id': 'worldbox:dirt.block', 'name': 'Dirt', 'color': (134, 96, 67),
      'textures': {'top': 'dirt.png', 'side': 'dirt.png',
                   'bottom': 'dirt.png'}},
+    {'id': 'worldbox:coarse_dirt.block', 'name': 'Coarse Dirt',
+     'color': (150, 110, 78),
+     'textures': {'top': 'coarse_dirt.png', 'side': 'coarse_dirt.png',
+                  'bottom': 'coarse_dirt.png'}},
     {'id': 'worldbox:stone.block', 'name': 'Stone', 'color': (128, 128, 128)},
 )
 

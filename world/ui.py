@@ -358,14 +358,16 @@ class GameUI:
         self.inv_page_text = Text(parent=self.inventory_root, text='',
                                   origin=(0, 0), y=-.29, scale=.6,
                                   color=color.gray, z=UI_FRONT_Z)
+        # 翻页按钮不挂 Ursina 的 on_click：Ursina 在鼠标松开时也会对悬停的按钮
+        # 触发一次 on_click，会和下面的物理轮询命中重复调用，导致 2 页时点一下
+        # 净变化为 0（看起来"翻不动"）甚至来回闪。这里直接调用翻页方法，
+        # 并保证每次点击只翻一页（见 inventory_click）。
         self.inv_prev_button = Button(
             parent=self.inventory_root, text=i18n.t('inventory.prev'),
-            scale=(.22, .055), color=BUTTON_COLOR,
-            x=-.42, y=-.43, on_click=lambda: self.turn_inventory_page(-1))
+            scale=(.22, .055), color=BUTTON_COLOR, x=-.42, y=-.43)
         self.inv_next_button = Button(
             parent=self.inventory_root, text=i18n.t('inventory.next'),
-            scale=(.22, .055), color=BUTTON_COLOR,
-            x=.42, y=-.43, on_click=lambda: self.turn_inventory_page(1))
+            scale=(.22, .055), color=BUTTON_COLOR, x=.42, y=-.43)
 
         self.held_icons = self._make_held_icons()
 
@@ -426,14 +428,14 @@ class GameUI:
             y = .29 - i * row_step
             label = Text(parent=self.settings_root, text=i18n.t(f'settings.{key}'),
                          origin=(-.5, 0), x=-.7, y=y, scale=.75)
+            # +/- 不挂 on_click：避免 Ursina 在鼠标松开时与下面的物理轮询命中
+            # 重复触发，导致一次点击数值跳两格（见 settings_click）。
             minus = Button(parent=self.settings_root, text='-', scale=(.055, .055),
-                           x=.26, y=y,
-                           on_click=(lambda k=key: self.adjust_setting(k, -1)))
+                           x=.26, y=y)
             value = Text(parent=self.settings_root, text='', origin=(0, 0),
                          x=.42, y=y, scale=.75)
             plus = Button(parent=self.settings_root, text='+', scale=(.055, .055),
-                          x=.60, y=y,
-                          on_click=(lambda k=key: self.adjust_setting(k, 1)))
+                          x=.60, y=y)
             self.settings_rows.append((key, label, value, minus, plus))
 
         self.settings_hint = Text(parent=self.settings_root, text=i18n.t('settings.hint'),
@@ -1330,12 +1332,16 @@ class GameUI:
                 button.on_click()
                 return True
         for i, (_key, _label, _value, minus, plus) in enumerate(self.settings_rows):
-            for button in (minus, plus):
-                if self._hit_button(point, button):
-                    if self.settings_index != i:
-                        self.settings_index = i
-                    button.on_click()
-                    return True
+            if self._hit_button(point, minus):
+                if self.settings_index != i:
+                    self.settings_index = i
+                self.adjust_setting(_key, -1)
+                return True
+            if self._hit_button(point, plus):
+                if self.settings_index != i:
+                    self.settings_index = i
+                self.adjust_setting(_key, 1)
+                return True
         row = self._hit_row(point, [r[1] for r in self.settings_rows])
         if row is not None and row != self.settings_index:
             self.settings_index = row
@@ -1373,12 +1379,21 @@ class GameUI:
         return True
 
     def inventory_click(self, point, left_click, right_click=False):
-        """背包：翻页按钮优先，其余交给 MC 式格子交互。"""
+        """背包：翻页按钮优先，其余交给 MC 式格子交互。
+
+        翻页按钮的 on_click 已被置空，这里直接调用翻页方法，确保每次点击只翻
+        一页（否则 Ursina 在鼠标松开时还会对悬停按钮再触发一次，2 页时净变化
+        为 0，看起来"翻不动"并来回闪）。
+        """
         if left_click:
-            for button in (self.inv_prev_button, self.inv_next_button):
-                if button.enabled and self._hit_button(point, button):
-                    button.on_click()
-                    return True
+            if (self.inv_prev_button.enabled
+                    and self._hit_button(point, self.inv_prev_button)):
+                self.turn_inventory_page(-1)
+                return True
+            if (self.inv_next_button.enabled
+                    and self._hit_button(point, self.inv_next_button)):
+                self.turn_inventory_page(1)
+                return True
         self.handle_inventory_click(point, left_click, right_click)
         return True
 
