@@ -47,6 +47,7 @@ class Game:
         self.ui.on_play_save = self.start_save
         self.ui.on_player_created = self._player_created
         self.ui.on_quit_to_title = self.quit_to_title
+        self.ui.on_rename_player = self._rename_player
         self.keyboard = PhysicalKeys()
         self.sky = Sky()
 
@@ -138,7 +139,11 @@ class Game:
             'selected_slot': self.ui.selected_slot,
             'day_time': round(self.day_time, 5),
         }
-        return saves.save_payload(self.save_path, payload)
+        ok = saves.save_payload(self.save_path, payload,
+                                dirty_chunks=self.world.dirty_chunks)
+        if ok:
+            self.world.dirty_chunks.clear()
+        return ok
 
     def quit(self):
         self.save()
@@ -217,6 +222,10 @@ class Game:
                 if left_click:
                     ui.player_click(point)
             return True
+        if ui.rename_open:
+            if left_click:
+                ui.rename_click(point)
+            return True
         if ui.rebind_action:
             return True                      # 等待按键重绑定，点击不生效
         if ui.keys_open:
@@ -251,6 +260,17 @@ class Game:
         self.notice = i18n.t(key)
         self.notice_timer = 2.5
 
+    def _rename_player(self, name):
+        """游戏内改名：写回玩家档案，同步聊天前缀与标题页欢迎语。"""
+        if not saves.save_player(name):
+            return False
+        self.player_name = name
+        self.ui.player_name = name
+        self.ui.refresh_title()
+        self.notice = i18n.t('notice.renamed')
+        self.notice_timer = 2.0
+        return True
+
     def _apply_resource_pack(self, pack_id):
         """切换资源包：确保纹理已下载，重建材质、区块网格与物品图标。"""
         self._pack = pack_id
@@ -265,12 +285,13 @@ class Game:
         self.notice_timer = 2.0
 
     @staticmethod
-    def _placement_target(hx, hy, hz, normal, hit_y, segment=None):
+    def _placement_target(hx, hy, hz, normal, hit_y, segment=None,
+                          block_id=None):
         """根据命中面算出放置位置 (tx, ty, tz, layer)。
 
         下半砖顶面 → 同格上层；上半砖底面 → 同格下层（补全整格）；
-        整格/下半砖底面 → 下一格上层；整格顶面 → 上一格下层；
-        侧面 → 相邻格，命中段是上半砖时放上层。
+        整格/下半砖底面 → 下方一格：整块放下层、半砖放上层贴住底面；
+        整格顶面 → 上一格下层；侧面 → 相邻格，命中段是上半砖时放上层。
         """
         if segment is not None:
             seg_y0, seg_y1 = segment[0], segment[1]
@@ -282,8 +303,8 @@ class Game:
             return hx, hy + 1, hz, 0
         if normal == (0, -1, 0):                    # 底面
             if abs(seg_y0 - (hy + 0.5)) < 1e-6:
-                return hx, hy, hz, 0
-            return hx, hy - 1, hz, 1
+                return hx, hy, hz, 0            # 上半砖下面补下半砖
+            return hx, hy - 1, hz, (1 if blocks.is_slab(block_id) else 0)
         tx, tz = hx + normal[0], hz + normal[2]     # 侧面
         layer = 1 if abs(seg_y0 - (hy + 0.5)) < 1e-6 else 0
         return tx, hy, tz, layer
@@ -438,6 +459,10 @@ class Game:
             self._update_menus(just_pressed)
             return
 
+        # --- F3：切换调试信息面板 ---
+        if 'f3' in just_pressed:
+            self.ui.toggle_debug()
+
         # --- M 全屏地图 / ESC 逐层返回 ---
         if 'm' in just_pressed and self.mapview.is_open:
             self.mapview.close()
@@ -447,7 +472,9 @@ class Game:
               and not self.ui.inventory_open):
             self.mapview.toggle()
         elif 'escape' in just_pressed:
-            if self.ui.rebind_action:
+            if self.ui.rename_open:
+                self.ui.cancel_rename()
+            elif self.ui.rebind_action:
                 self.ui.cancel_rebind()
             elif self.ui.keys_open:
                 self.ui.close_keybinds()
@@ -558,7 +585,6 @@ class Game:
             just_pressed = set()
             self.mapview.update_marker()
         else:
-            self.ui.hud.enabled = True
             if not self.ui.inventory_open:
                 self.ui.hide_tooltip()
 
@@ -668,9 +694,9 @@ class Game:
                     self.world.record_edit(hx, hy, hz)
                     self.world.rebuild_around(hx, hz)
             if right_click and normal != (0, 0, 0):
-                tx, ty, tz, layer = self._placement_target(
-                    hx, hy, hz, normal, hit_y, segment)
                 block_id = self.ui.hotbar[self.ui.selected_slot]
+                tx, ty, tz, layer = self._placement_target(
+                    hx, hy, hz, normal, hit_y, segment, block_id)
                 if (block_id is not None
                         and 0 <= tx < config.WORLD_SIZE and 0 <= tz < config.WORLD_SIZE
                         and config.MIN_BLOCK_Y <= ty < config.MAX_BLOCK_Y
@@ -734,27 +760,44 @@ class Game:
             if self.notice_timer <= 0:
                 self.notice = ''
         if self.hud_timer >= config.HUD_INTERVAL:
-            if self.ui.menu_state['open']:
-                self.ui.hud.text = i18n.t('hud.menu')
-            elif self.ui.inventory_open:
-                self.ui.hud.text = i18n.t('hud.inventory')
-            else:
+            fps = int(self.hud_frames / self.hud_timer)
+            # 左上角按窗口宽高比定位：小窗口时左半截也不会被裁到屏幕外
+            self.ui.debug_root.x = -window.aspect_ratio / 2 + .02
+            self.ui.debug_root.y = .47
+            if self.ui.debug_open:
                 flags = [i18n.t(key) for key, on in
                          (('hud.crouch', self.player.crouching),
                           ('hud.sprint', self.player.sprinting),
                           ('hud.zoom', self.player.zooming)) if on]
-                flags_text = ('  [' + ' '.join(flags) + ']') if flags else ''
                 block_id = self.ui.hotbar[self.ui.selected_slot]
-                block_name = (i18n.block_name(block_id,
-                                              blocks.BLOCK_NAMES.get(block_id, 'Air'))
-                              if block_id else 'Air')
+                block_name = (i18n.block_name(
+                    block_id, blocks.BLOCK_NAMES.get(block_id, 'Air'))
+                    if block_id else 'Air')
                 clock = int(self.day_time * 24 * 60) % (24 * 60)
-                self.ui.hud.text = (
-                    f'FPS {int(self.hud_frames / self.hud_timer):3d}   '
-                    f'X {self.player.pos.x:6.1f}  Y {self.player.pos.y:5.2f}  Z {self.player.pos.z:6.1f}   '
-                    f'{i18n.t("hud.eye")} {self.player.current_eye:.2f} m   '
-                    f'{clock // 60:02d}:{clock % 60:02d}{flags_text}   {block_name}'
-                    f'{"  [" + self.notice + "]" if self.notice else ""}'
-                )
+                visible = sum(1 for entity in self.world.chunk_meshes.values()
+                              if entity.enabled)
+                save_name = (self.save_path.parent.name
+                             if self.save_path else '-')
+                self.ui.debug_text.text = '\n'.join((
+                    i18n.t('debug.title'),
+                    f'{i18n.t("debug.fps")}   {fps}',
+                    f'{i18n.t("debug.pos")}   {self.player.pos.x:.1f} / '
+                    f'{self.player.pos.y:.2f} / {self.player.pos.z:.1f}',
+                    f'{i18n.t("debug.eye")}   {self.player.current_eye:.2f} m'
+                    f'     {i18n.t("debug.time")}   {clock // 60:02d}:{clock % 60:02d}',
+                    f'{i18n.t("debug.block")}   {block_name}',
+                    f'{i18n.t("debug.state")}   '
+                    f'{" ".join(flags) or i18n.t("debug.none")}',
+                    f'{i18n.t("debug.chunks")}   {visible}/'
+                    f'{len(self.world.chunk_meshes)}'
+                    f'     {i18n.t("debug.edits")}   {len(self.world.world_edits)}',
+                    f'{i18n.t("debug.save")}   {save_name}',
+                ))
+            # 常驻 HUD 只显示临时提示，不再堆一长串调试信息
+            show_notice = (bool(self.notice) and not self.ui.any_screen_open()
+                           and not self.mapview.is_open)
+            self.ui.hud.enabled = show_notice
+            if show_notice:
+                self.ui.hud.text = self.notice
             self.hud_timer = 0.0
             self.hud_frames = 0

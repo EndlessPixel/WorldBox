@@ -32,6 +32,7 @@ class VoxelWorld:
         self.world_blocks = {}     # (x, y, z) -> 下层方块 id
         self.world_uppers = {}     # (x, y, z) -> 上层方块 id（半砖）
         self.world_edits = {}      # 玩家改动：(x, y, z) -> {'b': id|None, 't': id|None}
+        self.dirty_chunks = set()  # 待写回存档的区块 (cx, cz)
         self.chunk_blocks = {}     # (cx, cz) -> {(x, y, z), ...}
         self.chunk_meshes = {}     # (cx, cz) -> Entity
         self.chunks_per_axis = math.ceil(config.WORLD_SIZE / config.CHUNK_SIZE)
@@ -98,6 +99,7 @@ class VoxelWorld:
             'b': self.world_blocks.get(key),
             't': self.world_uppers.get(key),
         }
+        self.dirty_chunks.add(self.chunk_coord(x, z))
 
     def segments(self, x, y, z):
         """该格的实体段 [(y0, y1, block_id)]，按高度从低到高。"""
@@ -158,7 +160,7 @@ class VoxelWorld:
         edits = save_data.get('blocks')
         if not isinstance(edits, dict):
             return
-        for key, value in list(edits.items())[:30000]:
+        for key, value in edits.items():
             try:
                 x, y, z = (int(part) for part in str(key).split(','))
             except (TypeError, ValueError):

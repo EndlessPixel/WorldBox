@@ -1,10 +1,11 @@
 """多存档与玩家档案：saves/ 目录管理、旧存档迁移。
 
-存档结构：
-    saves/<存档名>/world.json      # 与旧 world_save.json 相同的内容
+存档结构（version 3，按 16x16 区块分文件）：
+    saves/<存档名>/world.json          # 玩家/快捷栏/时间等元数据
+    saves/<存档名>/chunks/c<cx>_<cz>.json  # 该区块内被改动过的格子
 玩家档案：
-    config/player.json             # {'name': 玩家名}
-首次运行会把根目录旧 world_save.json 迁移为第一个存档（不删除原文件）。
+    config/player.json                 # {'name': 玩家名}
+旧的 version 1/2 单文件存档仍可读，首次保存时自动迁移成分区块格式。
 """
 
 import json
@@ -17,6 +18,8 @@ from . import config
 SAVES_DIR = config.ROOT_DIR / 'saves'
 PLAYER_FILE = config.CONFIG_DIR / 'player.json'
 SAVE_FILE_NAME = 'world.json'
+CHUNKS_DIR_NAME = 'chunks'
+SAVE_FORMAT = 'chunks'
 NAME_MAX_LEN = 24
 # 存档名不允许出现的字符（路径安全）
 _NAME_BAD = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -35,6 +38,23 @@ def save_dir(name):
 
 def save_file(name):
     return save_dir(name) / SAVE_FILE_NAME
+
+
+def chunks_dir(path):
+    return Path(path).parent / CHUNKS_DIR_NAME
+
+
+def chunk_file(path, cx, cz):
+    return chunks_dir(path) / f'c{cx}_{cz}.json'
+
+
+def _chunk_coords(filename):
+    """从 c<cx>_<cz>.json 反解区块坐标；名字不合法返回 None。"""
+    try:
+        cx, cz = filename[1:].split('_')
+        return int(cx), int(cz)
+    except (ValueError, IndexError):
+        return None
 
 
 # ---------- 玩家档案 ----------
@@ -86,8 +106,11 @@ def list_saves():
         try:
             with path.open(encoding='utf-8') as f:
                 data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get('blocks'), dict):
-                info['blocks'] = len(data['blocks'])
+            if isinstance(data, dict):
+                if isinstance(data.get('blocks'), dict):
+                    info['blocks'] = len(data['blocks'])
+                else:
+                    info['blocks'] = max(0, int(data.get('block_count') or 0))
         except (OSError, ValueError, TypeError):
             pass
         saves.append(info)
@@ -138,25 +161,92 @@ def rename_save(old_name, new_name):
 
 # ---------- 读写 ----------
 def load_save(path):
-    """读取存档；损坏或不兼容时返回 None。"""
+    """读取存档；损坏或不兼容时返回 None。
+
+    version 3 的方块数据分散在 chunks/ 里，这里合并回 blocks 字段，
+    上层（VoxelWorld、存档列表）看到的仍然只是一份 dict。
+    单个区块文件损坏只跳过该文件，不会让整个存档打不开。
+    """
+    path = Path(path)
     try:
-        with Path(path).open(encoding='utf-8') as f:
+        with path.open(encoding='utf-8') as f:
             data = json.load(f)
     except (OSError, ValueError, TypeError):
         return None
-    if not isinstance(data, dict) or data.get('version') not in (1, 2):
+    if not isinstance(data, dict) or data.get('version') not in (1, 2, 3):
         return None
+    if data.get('format') == SAVE_FORMAT:
+        blocks = {}
+        cdir = chunks_dir(path)
+        if cdir.is_dir():
+            for item in sorted(cdir.glob('c*_*.json')):
+                if _chunk_coords(item.stem) is None:
+                    continue
+                try:
+                    with item.open(encoding='utf-8') as f:
+                        part = json.load(f)
+                except (OSError, ValueError, TypeError):
+                    continue
+                if isinstance(part, dict):
+                    blocks.update(part)
+        data['blocks'] = blocks
     return data
 
 
-def save_payload(path, payload):
-    """原子写回存档。"""
+def save_payload(path, payload, dirty_chunks=None):
+    """原子写回存档：方块按区块分文件，元数据单独放 world.json。
+
+    dirty_chunks 是 {(cx, cz), ...}，只重写变动过的区块，世界再大也不会
+    每次保存都重写全部数据。首次保存（还没有 chunks 目录）会全量迁移，
+    并清掉已经没有任何改动的旧区块文件。
+    """
     path = Path(path)
+    blocks = payload.get('blocks')
+    if not isinstance(blocks, dict):
+        blocks = {}
+    meta = {key: value for key, value in payload.items() if key != 'blocks'}
+    meta['version'] = 3
+    meta['format'] = SAVE_FORMAT
+    meta['block_count'] = len(blocks)
+
+    grouped = {}
+    for key, value in blocks.items():
+        try:
+            parts = str(key).split(',')
+            x, z = int(parts[0]), int(parts[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        cx, cz = x // config.CHUNK_SIZE, z // config.CHUNK_SIZE
+        grouped.setdefault((cx, cz), {})[key] = value
+
+    cdir = chunks_dir(path)
+    force_all = dirty_chunks is None or not cdir.is_dir()
+    if force_all:
+        targets = set(grouped)
+        if cdir.is_dir():
+            for item in cdir.glob('c*_*.json'):
+                coord = _chunk_coords(item.stem)
+                if coord is not None:
+                    targets.add(coord)
+    else:
+        targets = set(dirty_chunks)
+
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        cdir.mkdir(parents=True, exist_ok=True)
+        for cx, cz in targets:
+            data = grouped.get((cx, cz), {})
+            target = chunk_file(path, cx, cz)
+            if not data:
+                if target.exists():
+                    target.unlink()
+                continue
+            tmp = target.with_name(target.name + '.tmp')
+            with tmp.open('w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, separators=(',', ':'))
+            tmp.replace(target)
         tmp = path.with_name(path.name + '.tmp')
         with tmp.open('w', encoding='utf-8') as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+            json.dump(meta, f, ensure_ascii=False, indent=2)
         tmp.replace(path)
         return True
     except (OSError, TypeError, ValueError):

@@ -21,7 +21,9 @@ SAVES_MAX_ROWS = 8
 # 聊天框布局（UI 坐标：x∈±0.8, y∈±0.5）
 CHAT_X = -.78            # 左侧起点
 CHAT_WIDTH = 1.2         # 蒙版宽度
-CHAT_INPUT_Y = .375      # 输入行距屏幕底部的偏移
+CHAT_INPUT_Y = .415      # 聊天输入行中心距屏幕底部的偏移
+INPUT_HEIGHT = .052      # 输入框高度
+INPUT_FONT_SCALE = .85   # 输入框文字大小
 CHAT_LINE_STEP = .042    # 每条消息的行距
 CHAT_MAX_LINES = 8       # 最多保留几条
 CHAT_LIFE = 10.0         # 消息存活秒数（最后 1.5 秒淡出）
@@ -37,13 +39,14 @@ class TextInput:
 
     def __init__(self):
         self.root = Entity(parent=camera.ui, enabled=False)
+        # 背景与文字都以中心/左中部对齐，文字才能真正垂直居中于框内。
+        # z 比各页面遮罩（UI_FRONT_Z）更靠前，创建玩家/改名页里不会被盖住。
         self.bg = Entity(parent=self.root, model='quad',
                          color=color.rgba(0, 0, 0, .55),
-                         scale=(CHAT_WIDTH, .042), origin=(-.5, .5),
-                         x=CHAT_X, y=-CHAT_INPUT_Y, z=-1)
-        self.label = Text(parent=self.root, text='', origin=(-.5, .5),
-                          x=CHAT_X + .008, y=-CHAT_INPUT_Y + .007,
-                          scale=.55, z=-2)
+                         scale=(CHAT_WIDTH, INPUT_HEIGHT), origin=(0, 0),
+                         x=0, y=0, z=UI_FRONT_Z + 1)
+        self.label = Text(parent=self.root, text='', origin=(-.5, 0),
+                          x=0, y=0, scale=INPUT_FONT_SCALE, z=UI_FRONT_Z)
         self.text = ''
         self.prompt = ''
         self.max_len = CHAT_MAX_INPUT
@@ -58,20 +61,19 @@ class TextInput:
 
     def open(self, prompt='', on_submit=None, position=None, width=None,
              max_len=CHAT_MAX_INPUT, text='', on_cancel=None):
-        """打开输入框；position=(y, x) 指定输入行位置。"""
+        """打开输入框；position=(x, y) 是输入框中心的 UI 坐标。"""
         self.prompt = prompt
         self.on_submit = on_submit
         self.on_cancel = on_cancel
         self.text = text[:max_len]
         self.max_len = max_len
         if position is not None:
-            y, x = position
-            self.bg.y = -y
-            self.bg.x = x
-            self.label.y = -y + .007
-            self.label.x = x + .008
+            self.bg.x, self.bg.y = position
         if width is not None:
-            self.bg.scale = (width, .042)
+            self.bg.scale_x = width
+        # 文字贴左边缘内缩一点，垂直方向与背景中心对齐
+        self.label.x = self.bg.x - self.bg.scale_x / 2 + .012
+        self.label.y = self.bg.y
         self.cursor_on = True
         self.cursor_timer = 0.0
         self.root.enabled = True
@@ -158,6 +160,9 @@ class GameUI:
         self.keys_open = False
         self.keys_index = 0
         self.rebind_action = None
+        self.rename_open = False
+        self.debug_open = False
+        self.on_rename_player = lambda name: None
 
         # 快捷栏：玩家可改动；创造背包：固定展示全部方块，只读
         self.hotbar = [BLOCK_IDS[i] if i < len(BLOCK_IDS) else None
@@ -206,8 +211,23 @@ class GameUI:
             child.z = UI_FRONT_Z
 
     def _build_hud(self):
-        self.hud = Text(text='', position=(-0.86, 0.47), origin=(-0.5, 0.5),
-                        scale=0.75, background=True, z=-2)
+        # 常驻提示：只在有 notice 时显示，居中偏下，不再堆一长串调试信息
+        self.hud = Text(text='', position=(0, -.22), origin=(0, 0),
+                        scale=.8, background=True, z=UI_FRONT_Z, enabled=False)
+        # F3 调试面板：左上角，x 由 Game 按窗口宽高比动态校正，
+        # 避免小窗口时左半截文字被裁到屏幕外。
+        self.debug_root = Entity(parent=camera.ui, enabled=False)
+        Entity(parent=self.debug_root, model='quad',
+               color=color.rgba(0, 0, 0, .62),
+               scale=(.66, .36), origin=(-.5, .5), z=UI_FRONT_Z + 1)
+        self.debug_text = Text(parent=self.debug_root, text='',
+                               origin=(-.5, .5), x=.014, y=-.014,
+                               scale=.62, z=UI_FRONT_Z)
+
+    def toggle_debug(self):
+        self.debug_open = not self.debug_open
+        self.debug_root.enabled = self.debug_open
+        return self.debug_open
 
     def _build_crosshair(self):
         self.crosshair = Entity(parent=camera.ui)
@@ -270,9 +290,10 @@ class GameUI:
             self._restack_chat()
 
     def open_chat(self):
-        self.text_input.open(prompt='> ', on_submit=self.submit_chat,
-                             position=(-CHAT_INPUT_Y, CHAT_X),
-                             width=CHAT_WIDTH, max_len=CHAT_MAX_INPUT)
+        self.text_input.open(
+            prompt='> ', on_submit=self.submit_chat,
+            position=(CHAT_X + CHAT_WIDTH / 2, -CHAT_INPUT_Y),
+            width=CHAT_WIDTH, max_len=CHAT_MAX_INPUT)
 
     def submit_chat(self, text=''):
         """发送消息（TextInput 的回调）。
@@ -403,9 +424,13 @@ class GameUI:
 
         self.settings_hint = Text(parent=self.settings_root, text=i18n.t('settings.hint'),
                                   origin=(0, 0), y=-.3, scale=.5, color=color.gray)
+        self.settings_rename = Button(
+            parent=self.settings_root, text=i18n.t('settings.rename'),
+            scale=(.32, .065), color=BUTTON_COLOR,
+            x=-.20, y=-.42, on_click=self.open_rename)
         self.settings_back = Button(parent=self.settings_root, text=i18n.t('settings.back'),
-                                    scale=(.5, .065), color=BUTTON_COLOR,
-                                    y=-.42, on_click=self.close_settings)
+                                    scale=(.32, .065), color=BUTTON_COLOR,
+                                    x=.20, y=-.42, on_click=self.close_settings)
         self._bring_to_front(self.settings_root)
 
     def _build_packs(self):
@@ -573,8 +598,14 @@ class GameUI:
                                 color=color.gray, z=UI_FRONT_Z)
         self.player_button = Button(parent=self.player_root,
                                     text=i18n.t('player.confirm'),
-                                    scale=(.3, .06), color=BUTTON_COLOR, y=-.28,
+                                    scale=(.28, .06), color=BUTTON_COLOR,
+                                    x=-.18, y=-.28,
                                     on_click=self.submit_name_input)
+        # 改名时复用这个页面，额外提供鼠标可点的取消按钮
+        self.player_cancel_button = Button(
+            parent=self.player_root, text=i18n.t('rename.cancel'),
+            scale=(.28, .06), color=BUTTON_COLOR, x=.18, y=-.28,
+            enabled=False, on_click=self.cancel_rename)
         self._bring_to_front(self.player_root)
 
     # ---------- 页面切换 ----------
@@ -613,14 +644,58 @@ class GameUI:
         self._enter_menu_ui()
         self.screen = 'player'
         self.player_root.enabled = True
+        self.player_title.text = i18n.t('player.title')
+        self.player_hint.text = i18n.t('player.hint')
+        self.player_button.text = i18n.t('player.confirm')
+        self.player_cancel_button.enabled = False
         self._open_name_input(self.player_confirm, None)
 
-    def _open_name_input(self, on_submit, on_cancel):
-        """打开居中的名称输入框（创建玩家/新存档共用）。"""
+    # ---------- 游戏内改名（复用创建玩家页） ----------
+    def open_rename(self):
+        """设置页 → 更改玩家名；关闭后回到设置页。"""
+        self.rename_open = True
+        self.settings_root.enabled = False
+        self.player_root.enabled = True
+        self.player_cancel_button.enabled = True
+        self.player_title.text = i18n.t('rename.title')
+        self.player_hint.text = i18n.t('rename.hint')
+        self.player_button.text = i18n.t('rename.confirm')
+        self._open_name_input(self.submit_rename, self.cancel_rename,
+                              text=self.player_name or '')
+        mouse.locked = False
+
+    def submit_rename(self, name):
+        name = saves.sanitize_name(name)
+        if not name:
+            self.player_hint.text = i18n.t('rename.empty')
+            self._open_name_input(self.submit_rename, self.cancel_rename,
+                                  text=self.player_name or '')
+            return
+        if self.on_rename_player:
+            self.on_rename_player(name)
+        self.close_rename()
+
+    def cancel_rename(self):
+        self.close_rename()
+
+    def close_rename(self):
+        self.rename_open = False
+        if self.text_input.is_open:
+            self.text_input.close()
+        self.player_root.enabled = False
+        self.player_cancel_button.enabled = False
+        self.player_title.text = i18n.t('player.title')
+        self.player_hint.text = i18n.t('player.hint')
+        self.player_button.text = i18n.t('player.confirm')
+        self.settings_root.enabled = True
+        mouse.locked = False
+
+    def _open_name_input(self, on_submit, on_cancel, text=''):
+        """打开居中的名称输入框（创建玩家/新存档/改名共用）。"""
         self.text_input.open(prompt='', on_submit=on_submit,
                              on_cancel=on_cancel,
-                             position=(.0, -.30), width=.8,
-                             max_len=saves.NAME_MAX_LEN)
+                             position=(0, -.08), width=.8,
+                             max_len=saves.NAME_MAX_LEN, text=text)
 
     def _hide_screens(self):
         for root in (self.title_root, self.saves_root, self.new_save_root,
@@ -629,6 +704,8 @@ class GameUI:
             root.enabled = False
         self.settings_open = self.packs_open = self.keys_open = False
         self.menu_state['open'] = False
+        self.rename_open = False
+        self.player_cancel_button.enabled = False
         if self.text_input.is_open:
             self.text_input.close()
 
@@ -641,7 +718,7 @@ class GameUI:
         if self.held_item is not None:
             self.clear_held()
         self.hotbar_root.enabled = True
-        self.hud.enabled = True
+        self.hud.enabled = False
         self.crosshair.enabled = True
         self.chat_root.enabled = True
 
@@ -686,12 +763,8 @@ class GameUI:
         self.show_saves()
 
     def title_settings(self):
-        self.settings_from_title = True
-        self.settings_open = True
-        self.settings_index = 0
+        self.open_settings(from_title=True)
         self.title_root.enabled = False
-        self.settings_root.enabled = True
-        self.refresh_settings()
 
     def title_quit(self):
         if self.on_quit:
@@ -1054,6 +1127,7 @@ class GameUI:
 
         self.settings_title.text = i18n.t('settings.title')
         self.settings_hint.text = i18n.t('settings.hint')
+        self.settings_rename.text = i18n.t('settings.rename')
         self.settings_back.text = i18n.t('settings.back')
         self.refresh_settings()
 
@@ -1088,6 +1162,12 @@ class GameUI:
         self.player_title.text = i18n.t('player.title')
         self.player_hint.text = i18n.t('player.hint')
         self.player_button.text = i18n.t('player.confirm')
+        self.player_cancel_button.text = i18n.t('rename.cancel')
+        if self.rename_open:
+            # 改名页复用创建玩家页，语言切换后要保持改名文案
+            self.player_title.text = i18n.t('rename.title')
+            self.player_hint.text = i18n.t('rename.hint')
+            self.player_button.text = i18n.t('rename.confirm')
 
     def load_hotbar(self, save_data):
         """从存档恢复快捷栏与选中格（无效条目置空）。"""
@@ -1137,7 +1217,8 @@ class GameUI:
     def any_screen_open(self):
         """是否有页面占着鼠标（此时不能把指针锁回游戏中心）。"""
         return (self.menu_state['open'] or self.settings_open
-                or self.packs_open or self.keys_open or self.inventory_open)
+                or self.packs_open or self.keys_open
+                or self.inventory_open or self.rename_open)
 
     @staticmethod
     def _hit_button(point, button):
@@ -1182,6 +1263,14 @@ class GameUI:
         if self._hit_button(point, self.player_button):
             self.player_button.on_click()
 
+    def rename_click(self, point):
+        """改名页：确认 / 取消。"""
+        for button in (self.player_button, self.player_cancel_button):
+            if button.enabled and self._hit_button(point, button):
+                button.on_click()
+                return True
+        return False
+
     def submit_name_input(self):
         """鼠标点创建/确认按钮：等价于在名称输入框里按回车。"""
         if self.text_input.is_open:
@@ -1214,9 +1303,10 @@ class GameUI:
         """设置页：点 - + 调整，点行选中，点返回退出。"""
         if point is None:
             return False
-        if self._hit_button(point, self.settings_back):
-            self.settings_back.on_click()
-            return True
+        for button in (self.settings_rename, self.settings_back):
+            if self._hit_button(point, button):
+                button.on_click()
+                return True
         for i, (_key, _label, _value, minus, plus) in enumerate(self.settings_rows):
             for button in (minus, plus):
                 if self._hit_button(point, button):
@@ -1367,8 +1457,9 @@ class GameUI:
         self.menu_root.enabled = False
         mouse.locked = True
 
-    def open_settings(self):
-        self.settings_from_title = False
+    def open_settings(self, from_title=False):
+        """from_title 决定返回时回主页面还是回暂停菜单。"""
+        self.settings_from_title = from_title
         self.settings_open = True
         self.settings_index = 0
         self.menu_root.enabled = False
