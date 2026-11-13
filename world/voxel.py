@@ -9,6 +9,7 @@
 
 import math
 
+from panda3d.core import TransparencyAttrib
 from ursina import Entity, Mesh, color, destroy
 
 from . import config
@@ -391,6 +392,12 @@ class VoxelWorld:
             entity.texture = self.materials.texture
             entity.set_two_sided(True)     # 换模型后重新关闭背面剔除
             entity.color = self.block_tint
+        # 关键：Ursina 的 model setter 会把模型节点强制设为 M_dual 透明，
+        # 导致 64 个巨大区块网格每帧按距离重新排序、进入透明渲染管线，
+        # 互相穿插处出现闪烁。所有方块纹理都是不透明的，这里强制改回
+        # 不透明（M_none），让它们走不透明管线、正确写深度，彻底消除闪烁。
+        # 必须在 model 赋值之后执行（setter 会把它改回 M_dual）。
+        entity.model.setTransparency(TransparencyAttrib.M_none)
         if old_model is not None:
             old_model.removeNode()         # 释放被替换下来的旧模型节点
         entity.enabled = True

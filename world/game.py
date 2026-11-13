@@ -373,6 +373,14 @@ class Game:
                 py_time.sleep(wait)
         self._last_frame_time = py_time.perf_counter()
 
+        # --- 远裁剪面跟随视距：Ursina 默认 far=1000 对体素世界过远，会让深度
+        # 缓冲精度不足，远处方块面互相 z-fighting 而闪烁。收紧到"视距 + 余量"
+        # 即可；天空穹顶会按 far 自动缩放，不会被裁掉。 ---
+        need_far = config.VIEW_DISTANCE + 48
+        if getattr(self, '_cam_far', None) != need_far:
+            camera.far = need_far
+            self._cam_far = need_far
+
         # --- 任何 UI 页面打开或窗口最小化时都释放鼠标，否则锁回游戏 ---
         panda_window = application.base.win if application.base else None
         if panda_window is not None:
