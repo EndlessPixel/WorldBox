@@ -309,6 +309,20 @@ class Game:
         layer = 1 if abs(seg_y0 - (hy + 0.5)) < 1e-6 else 0
         return tx, hy, tz, layer
 
+    @staticmethod
+    def _placement_states(block_id, normal):
+        """按放置面自动决定方块状态：目前支持 axis（原木沿法线方向倒下）。
+
+        以后加朝向类方块，只要在新方块的 states 里声明并在这里补规则即可。
+        """
+        if not block_id or 'axis' not in blocks.BLOCK_STATES.get(block_id, {}):
+            return None
+        if normal[0]:
+            return {'axis': 'x'}
+        if normal[2]:
+            return {'axis': 'z'}
+        return {'axis': 'y'}
+
     def _drop_item(self):
         """丢弃：先丢手上的物品，否则清空当前快捷栏格。"""
         if self.ui.held_item is not None:
@@ -588,51 +602,17 @@ class Game:
             if not self.ui.inventory_open:
                 self.ui.hide_tooltip()
 
-        # --- 背包打开：暂停移动，方向键选择、回车放入快捷栏 ---
+        # --- 背包打开：暂停移动；鼠标为主，键盘只做翻页与快捷栏选格 ---
         if self.ui.inventory_open:
-            page_size = config.INVENTORY_PAGE_SIZE
-            page_items = self.ui.inventory_page_items()
-            moved = False
-            if 'left' in just_pressed:
-                self.ui.inv_selected = (self.ui.inv_selected - 1) % max(1, len(page_items))
-                moved = True
-            if 'right' in just_pressed:
-                self.ui.inv_selected = (self.ui.inv_selected + 1) % max(1, len(page_items))
-                moved = True
-            if 'up' in just_pressed:
-                self.ui.inv_selected = (
-                    self.ui.inv_selected - config.INVENTORY_COLS) % max(1, len(page_items))
-                moved = True
-            if 'down' in just_pressed:
-                self.ui.inv_selected = (
-                    self.ui.inv_selected + config.INVENTORY_COLS) % max(1, len(page_items))
-                moved = True
             if 'page_up' in just_pressed or 'page_down' in just_pressed:
-                self.ui.turn_inventory_page(-1 if 'page_up' in just_pressed else 1)
-                moved = True
-            if moved:
-                self.ui.refresh_inventory()
-            if 'enter' in just_pressed:
-                # 手上有物品时优先用它替换当前快捷栏格，否则取高亮的创造背包格
-                picked = (self.ui.held_item
-                          or (page_items[self.ui.inv_selected]
-                              if self.ui.inv_selected < len(page_items) else None))
-                if picked is not None:
-                    old = self.ui.hotbar[self.ui.selected_slot]
-                    self.ui.hotbar[self.ui.selected_slot] = picked
-                    if self.ui.held_item is not None:
-                        # 交换：手上换成被替换掉的物品，避免丢失
-                        self.ui.held_item = old
-                        self.ui.held_from = (self.ui.selected_slot
-                                             if old is not None else None)
-                    self.ui.refresh_hotbar()
+                self.ui.turn_inventory_page(
+                    -1 if 'page_up' in just_pressed else 1)
             for i in range(config.HOTBAR_SLOTS):
                 if str(i + 1) in just_pressed:
                     self.ui.selected_slot = i
                     self.ui.refresh_hotbar()
-
-            # 鼠标点击已由 _dispatch_click 统一处理，这里只刷新悬浮提示
-            self.ui.update_tooltip(point)
+            # 鼠标点击已由 _dispatch_click 统一处理，这里只刷新光标状态
+            self.ui.update_inventory_cursor(point)
             keys = set()
             just_pressed = set()
 
@@ -702,13 +682,17 @@ class Game:
                         and config.MIN_BLOCK_Y <= ty < config.MAX_BLOCK_Y
                         and self.world.can_place(tx, ty, tz, layer, block_id)
                         and not self.player.overlaps(tx, ty, tz, block_id, layer)):
-                    self.world.add_block(tx, ty, tz, block_id, layer=layer)
+                    self.world.add_block(
+                        tx, ty, tz, block_id, layer=layer,
+                        states=self._placement_states(block_id, normal))
                     self.world.record_edit(tx, ty, tz)
                     self.world.rebuild_around(tx, tz)
 
         if self.ui.crosshair.enabled != active:
             self.ui.crosshair.enabled = active
-        show_hotbar = not self.ui.menu_state['open'] and not self.mapview.is_open
+        show_hotbar = (not self.ui.menu_state['open']
+                       and not self.ui.inventory_open
+                       and not self.mapview.is_open)
         if self.ui.hotbar_root.enabled != show_hotbar:
             self.ui.hotbar_root.enabled = show_hotbar
         # 地图打开时隐藏聊天记录

@@ -171,11 +171,11 @@ DAY_LENGTH        = 180.0   # 一昼夜时长（秒）
 START_DAY_TIME    = 0.35    # 0=午夜, 0.25=日出, 0.5=正午, 0.75=日落
 
 HOTBAR_SLOTS      = 9       # 快捷栏格数
-INVENTORY_COLS    = 5       # 创造背包列数（每页）
-INVENTORY_ROWS    = 2       # 创造背包行数（每页）
-INVENTORY_PAGE_SIZE = INVENTORY_COLS * INVENTORY_ROWS   # 每页方块数
-SLOT_SIZE         = 0.052   # UI 格子边长（屏幕比例）
-SLOT_GAP          = 0.006   # 格子间距
+INVENTORY_COLS    = 9       # 创造背包列数（MC 风格 9×3）
+INVENTORY_ROWS    = 3       # 创造背包行数
+INVENTORY_PAGE_SIZE = INVENTORY_COLS * INVENTORY_ROWS   # 每页 27 格
+SLOT_SIZE         = 0.075   # UI 格子边长（屏幕比例）
+SLOT_GAP          = 0.008   # 格子间距
 # ===========================================
 
 

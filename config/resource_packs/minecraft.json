@@ -19,5 +19,12 @@
   "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/mycelium_top.png": "assets/worldbox/blocks/mycelium_top.png",
   "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/mycelium_side.png": "assets/worldbox/blocks/mycelium_side.png",
   "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/netherrack.png": "assets/worldbox/blocks/netherrack.png",
-  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/chiseled_stone_bricks.png": "assets/worldbox/blocks/chiseled_stone_bricks.png"
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/chiseled_stone_bricks.png": "assets/worldbox/blocks/chiseled_stone_bricks.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/deepslate_bricks.png": "assets/worldbox/blocks/deepslate_bricks.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/end_stone_bricks.png": "assets/worldbox/blocks/end_stone_bricks.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/nether_bricks.png": "assets/worldbox/blocks/nether_bricks.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/oak_planks.png": "assets/worldbox/blocks/oak_planks.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/mud.png": "assets/worldbox/blocks/mud.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/oak_log_top.png": "assets/worldbox/blocks/oak_log_top.png",
+  "https://assets.mcasset.cloud/26.3/assets/minecraft/textures/block/oak_log.png": "assets/worldbox/blocks/oak_log.png"
 }

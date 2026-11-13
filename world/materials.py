@@ -1,141 +1,20 @@
 """方块材质：加载 MC 16x16 纹理，生成共享图集与 3D 物品网格。
 
 - 世界网格和快捷栏/背包共用一张图集纹理，避免每种方块一个材质。
+- 每个「方块状态变体」占图集一列，列内按 FACE_SLOTS 逐槽放贴图；
+  贴图与变体全部来自 config/blocks.json 的声明（见 world/blocks.py）。
 - 草方块顶面/侧面草边是灰度图，这里乘绿色滤镜。
-- 物品图标用等距三面（顶/左/右）Mesh，呈现 3D 方块效果。
 """
 
 from PIL import Image
 from ursina import Mesh, Texture
 
 from . import config
-from .blocks import BLOCK_IDS, BLOCKS, DEFAULT_BLOCK_ID, is_slab
+from .blocks import (BLOCK_IDS, BLOCKS, DEFAULT_BLOCK_ID, FACE_SLOTS,
+                     all_variants, is_slab, textures_for)
 
 TILE = 16
 GRASS_TINT = (0.62, 1.10, 0.48)
-
-SURFACE_FILES = {
-    'worldbox:grass.block': {
-        'top': 'grass_block_top.png',
-        'side': 'grass_block_side.png',
-        'bottom': 'coarse_dirt.png',
-    },
-    'worldbox:dirt.block': {
-        'top': 'coarse_dirt.png',
-        'side': 'coarse_dirt.png',
-        'bottom': 'coarse_dirt.png',
-    },
-    'worldbox:stone.block': {
-        'top': 'stone.png',
-        'side': 'stone.png',
-        'bottom': 'stone.png',
-    },
-    'worldbox:stone_slab.block': {
-        'top': 'stone.png',
-        'side': 'stone.png',
-        'bottom': 'stone.png',
-    },
-    'worldbox:cobblestone.block': {
-        'top': 'cobblestone.png',
-        'side': 'cobblestone.png',
-        'bottom': 'cobblestone.png',
-    },
-    'worldbox:cobblestone_slab.block': {
-        'top': 'cobblestone.png',
-        'side': 'cobblestone.png',
-        'bottom': 'cobblestone.png',
-    },
-    'worldbox:bedrock.block': {
-        'top': 'bedrock.png',
-        'side': 'bedrock.png',
-        'bottom': 'bedrock.png',
-    },
-    'worldbox:obsidian.block': {
-        'top': 'obsidian.png',
-        'side': 'obsidian.png',
-        'bottom': 'obsidian.png',
-    },
-    'worldbox:bricks.block': {
-        'top': 'bricks.png',
-        'side': 'bricks.png',
-        'bottom': 'bricks.png',
-    },
-    'worldbox:bricks_slab.block': {
-        'top': 'bricks.png',
-        'side': 'bricks.png',
-        'bottom': 'bricks.png',
-    },
-    'worldbox:clay.block': {
-        'top': 'clay.png',
-        'side': 'clay.png',
-        'bottom': 'clay.png',
-    },
-    'worldbox:stone_bricks.block': {
-        'top': 'stone_bricks.png',
-        'side': 'stone_bricks.png',
-        'bottom': 'stone_bricks.png',
-    },
-    'worldbox:stone_bricks_slab.block': {
-        'top': 'stone_bricks.png',
-        'side': 'stone_bricks.png',
-        'bottom': 'stone_bricks.png',
-    },
-    'worldbox:end_stone.block': {
-        'top': 'end_stone.png',
-        'side': 'end_stone.png',
-        'bottom': 'end_stone.png',
-    },
-    'worldbox:mossy_cobblestone.block': {
-        'top': 'mossy_cobblestone.png',
-        'side': 'mossy_cobblestone.png',
-        'bottom': 'mossy_cobblestone.png',
-    },
-    'worldbox:mossy_cobblestone_slab.block': {
-        'top': 'mossy_cobblestone.png',
-        'side': 'mossy_cobblestone.png',
-        'bottom': 'mossy_cobblestone.png',
-    },
-    'worldbox:mossy_stone_bricks.block': {
-        'top': 'mossy_stone_bricks.png',
-        'side': 'mossy_stone_bricks.png',
-        'bottom': 'mossy_stone_bricks.png',
-    },
-    'worldbox:mossy_stone_bricks_slab.block': {
-        'top': 'mossy_stone_bricks.png',
-        'side': 'mossy_stone_bricks.png',
-        'bottom': 'mossy_stone_bricks.png',
-    },
-    'worldbox:cracked_stone_bricks.block': {
-        'top': 'cracked_stone_bricks.png',
-        'side': 'cracked_stone_bricks.png',
-        'bottom': 'cracked_stone_bricks.png',
-    },
-    'worldbox:cracked_stone_bricks_slab.block': {
-        'top': 'cracked_stone_bricks.png',
-        'side': 'cracked_stone_bricks.png',
-        'bottom': 'cracked_stone_bricks.png',
-    },
-    'worldbox:podzol.block': {
-        'top': 'podzol_top.png',
-        'side': 'podzol_side.png',
-        'bottom': 'podzol_side.png',
-    },
-    'worldbox:mycelium.block': {
-        'top': 'mycelium_top.png',
-        'side': 'mycelium_side.png',
-        'bottom': 'mycelium_side.png',
-    },
-    'worldbox:netherrack.block': {
-        'top': 'netherrack.png',
-        'side': 'netherrack.png',
-        'bottom': 'netherrack.png',
-    },
-    'worldbox:chiseled_stone_bricks.block': {
-        'top': 'chiseled_stone_bricks.png',
-        'side': 'chiseled_stone_bricks.png',
-        'bottom': 'chiseled_stone_bricks.png',
-    },
-}
 
 
 class BlockMaterials:
@@ -147,27 +26,38 @@ class BlockMaterials:
             texture_dir = config.ROOT_DIR / 'assets' / 'worldbox' / 'blocks'
         self.texture_dir = texture_dir
         self.block_ids = list(BLOCK_IDS)
-        width = max(1, len(self.block_ids)) * TILE
-        self.atlas = Image.new('RGBA', (width, TILE * 3), (0, 0, 0, 0))
-        self.uvs = {}
-        self.item_meshes = {}
 
-        for col, block_id in enumerate(self.block_ids):
-            self.uvs[block_id] = {}
-            for row, face in enumerate(('top', 'side', 'bottom')):
-                tile = self._load_tile(block_id, face)
+        # 收集所有需要生成贴图的变体（基础方块 + 声明的状态变体）
+        self.variant_textures = {}
+        self.variant_keys = []
+        for key, block_id, states in all_variants():
+            if key in self.variant_textures:
+                continue
+            self.variant_textures[key] = (block_id,
+                                          textures_for(block_id, states))
+            self.variant_keys.append(key)
+
+        width = max(1, len(self.variant_keys)) * TILE
+        self.atlas = Image.new('RGBA',
+                               (width, TILE * len(FACE_SLOTS)),
+                               (0, 0, 0, 0))
+        self.uvs = {}
+        for col, key in enumerate(self.variant_keys):
+            self.uvs[key] = {}
+            for row, slot in enumerate(FACE_SLOTS):
+                tile = self._load_tile(key, slot)
                 self.atlas.paste(tile, (col * TILE, row * TILE))
-                self.uvs[block_id][face] = self._uv(col, row)
+                self.uvs[key][slot] = self._uv(col, row)
 
         self.texture = Texture(self.atlas, filtering='nearest')
+        self.item_meshes = {}
         for block_id in self.block_ids:
             self.item_meshes[block_id] = self._make_item_mesh(block_id)
 
     # ---------- 纹理加载 ----------
-    def _load_tile(self, block_id, face):
-        # 显式映射优先；未收录的自定义方块按 ID 后缀找同名 png（三面共用）
-        filename = (SURFACE_FILES.get(block_id, {}).get(face)
-                    or f'{block_id.split(":")[-1].split(".")[0]}.png')
+    def _load_tile(self, variant_key, slot):
+        block_id, textures = self.variant_textures[variant_key]
+        filename = textures.get(slot) or textures.get('side')
         if filename:
             path = self.texture_dir / filename
             if path.exists():
@@ -176,6 +66,8 @@ class BlockMaterials:
                     if image.size != (TILE, TILE):
                         image = image.resize((TILE, TILE), Image.NEAREST)
                     if block_id == 'worldbox:grass.block':
+                        face = ('top' if slot == 'top'
+                                else 'bottom' if slot == 'bottom' else 'side')
                         self._tint_grass(image, face)
                     return image
                 except OSError:
@@ -230,8 +122,9 @@ class BlockMaterials:
 
     # ---------- 3D 物品图标 ----------
     def _make_item_mesh(self, block_id):
-        top_uv = self.uvs[block_id]['top']
-        side_uv = self.uvs[block_id]['side']
+        uv_set = self.uvs[block_id]
+        top_uv = uv_set['top']
+        side_uv = uv_set['side']
         coordinates = (
             (-0.5, 0.25), (0.0, 0.5), (0.5, 0.25), (0.0, 0.0),      # 顶面
             (-0.5, 0.25), (0.0, 0.0), (0.0, -0.5), (-0.5, -0.25),   # 左面

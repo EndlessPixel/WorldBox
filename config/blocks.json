@@ -2,12 +2,22 @@
   {
     "id": "worldbox:grass.block",
     "name": "Grass",
-    "color": [92, 172, 78]
+    "color": [92, 172, 78],
+    "textures": {
+      "top": "grass_block_top.png",
+      "side": "grass_block_side.png",
+      "bottom": "coarse_dirt.png"
+    }
   },
   {
     "id": "worldbox:dirt.block",
     "name": "Dirt",
-    "color": [134, 96, 67]
+    "color": [134, 96, 67],
+    "textures": {
+      "top": "coarse_dirt.png",
+      "side": "coarse_dirt.png",
+      "bottom": "coarse_dirt.png"
+    }
   },
   {
     "id": "worldbox:stone.block",
@@ -102,12 +112,22 @@
   {
     "id": "worldbox:podzol.block",
     "name": "Podzol",
-    "color": [120, 85, 55]
+    "color": [120, 85, 55],
+    "textures": {
+      "top": "podzol_top.png",
+      "side": "podzol_side.png",
+      "bottom": "podzol_side.png"
+    }
   },
   {
     "id": "worldbox:mycelium.block",
     "name": "Mycelium",
-    "color": [140, 130, 145]
+    "color": [140, 130, 145],
+    "textures": {
+      "top": "mycelium_top.png",
+      "side": "mycelium_side.png",
+      "bottom": "mycelium_side.png"
+    }
   },
   {
     "id": "worldbox:netherrack.block",
@@ -118,5 +138,81 @@
     "id": "worldbox:chiseled_stone_bricks.block",
     "name": "Chiseled Stone Bricks",
     "color": [122, 122, 122]
+  },
+  {
+    "id": "worldbox:deepslate_bricks.block",
+    "name": "Deepslate Bricks",
+    "color": [86, 86, 92]
+  },
+  {
+    "id": "worldbox:deepslate_bricks_slab.block",
+    "name": "Deepslate Bricks Slab",
+    "color": [86, 86, 92],
+    "shape": "slab"
+  },
+  {
+    "id": "worldbox:end_stone_bricks.block",
+    "name": "End Stone Bricks",
+    "color": [219, 213, 161]
+  },
+  {
+    "id": "worldbox:end_stone_bricks_slab.block",
+    "name": "End Stone Bricks Slab",
+    "color": [219, 213, 161],
+    "shape": "slab"
+  },
+  {
+    "id": "worldbox:nether_bricks.block",
+    "name": "Nether Bricks",
+    "color": [72, 38, 38]
+  },
+  {
+    "id": "worldbox:nether_bricks_slab.block",
+    "name": "Nether Bricks Slab",
+    "color": [72, 38, 38],
+    "shape": "slab"
+  },
+  {
+    "id": "worldbox:oak_planks.block",
+    "name": "Oak Planks",
+    "color": [162, 130, 78]
+  },
+  {
+    "id": "worldbox:oak_planks_slab.block",
+    "name": "Oak Planks Slab",
+    "color": [162, 130, 78],
+    "shape": "slab"
+  },
+  {
+    "id": "worldbox:mud.block",
+    "name": "Mud",
+    "color": [112, 102, 94]
+  },
+  {
+    "id": "worldbox:oak_log.block",
+    "name": "Oak Log",
+    "color": [151, 121, 74],
+    "textures": {
+      "top": "oak_log_top.png",
+      "side": "oak_log.png",
+      "bottom": "oak_log_top.png"
+    },
+    "states": {
+      "axis": ["y", "x", "z"]
+    },
+    "texture_variants": {
+      "axis=x": {
+        "top": "oak_log.png",
+        "bottom": "oak_log.png",
+        "+x": "oak_log_top.png",
+        "-x": "oak_log_top.png"
+      },
+      "axis=z": {
+        "top": "oak_log.png",
+        "bottom": "oak_log.png",
+        "+z": "oak_log_top.png",
+        "-z": "oak_log_top.png"
+      }
+    }
   }
 ]

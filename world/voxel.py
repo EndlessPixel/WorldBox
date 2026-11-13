@@ -12,7 +12,8 @@ import math
 from ursina import Entity, Mesh, color, destroy
 
 from . import config
-from .blocks import BLOCKS, DEFAULT_BLOCK_ID, SLAB_HEIGHT, is_slab
+from .blocks import (BLOCKS, DEFAULT_BLOCK_ID, SLAB_HEIGHT, is_slab,
+                     normalize_states, variant_key)
 from .materials import BlockMaterials
 
 SUPPORT_TOLERANCE = 0.05   # 脚部允许与支撑面相差的高度（米）
@@ -33,6 +34,7 @@ class VoxelWorld:
         self.world_uppers = {}     # (x, y, z) -> 上层方块 id（半砖）
         self.world_edits = {}      # 玩家改动：(x, y, z) -> {'b': id|None, 't': id|None}
         self.dirty_chunks = set()  # 待写回存档的区块 (cx, cz)
+        self.world_states = {}     # (x, y, z, layer) -> 非默认的方块状态差异
         self.chunk_blocks = {}     # (cx, cz) -> {(x, y, z), ...}
         self.chunk_meshes = {}     # (cx, cz) -> Entity
         self.chunks_per_axis = math.ceil(config.WORLD_SIZE / config.CHUNK_SIZE)
@@ -47,8 +49,11 @@ class VoxelWorld:
     def chunk_coord(self, x, z):
         return (x // config.CHUNK_SIZE, z // config.CHUNK_SIZE)
 
-    def add_block(self, x, y, z, block_id, layer=0):
-        """放置方块：layer 0 = 下层，layer 1 = 上层（只放半砖）。"""
+    def add_block(self, x, y, z, block_id, layer=0, states=None):
+        """放置方块：layer 0 = 下层，layer 1 = 上层（只放半砖）。
+
+        states 是方块状态差异，只存非默认值（见 blocks.normalize_states）。
+        """
         key = (x, y, z)
         if layer == 1:
             if not is_slab(block_id):
@@ -58,6 +63,11 @@ class VoxelWorld:
             self.world_blocks[key] = block_id
             if not is_slab(block_id):
                 self.world_uppers.pop(key, None)   # 整块占满整格
+        diff = normalize_states(block_id, states)
+        if diff:
+            self.world_states[(x, y, z, layer)] = diff
+        else:
+            self.world_states.pop((x, y, z, layer), None)
         self.chunk_blocks.setdefault(self.chunk_coord(x, z), set()).add(key)
         return True
 
@@ -72,6 +82,9 @@ class VoxelWorld:
             changed = self.world_uppers.pop(key, None) is not None
         else:
             changed = self.world_blocks.pop(key, None) is not None
+        if changed:
+            for item in ((0, 1) if layer is None else (layer,)):
+                self.world_states.pop((x, y, z, item), None)
         return changed
 
     def can_place(self, x, y, z, layer, block_id):
@@ -93,12 +106,20 @@ class VoxelWorld:
         return upper is None or is_slab(block_id)
 
     def record_edit(self, x, y, z):
-        """记录玩家改动（存档用）。"""
+        """记录玩家改动（存档用）；状态差异随方块一起落盘。"""
         key = (x, y, z)
-        self.world_edits[key] = {
+        edit = {
             'b': self.world_blocks.get(key),
             't': self.world_uppers.get(key),
         }
+        states = {}
+        for layer in (0, 1):
+            diff = self.world_states.get((x, y, z, layer))
+            if diff:
+                states[str(layer)] = dict(diff)
+        if states:
+            edit['s'] = states
+        self.world_edits[key] = edit
         self.dirty_chunks.add(self.chunk_coord(x, z))
 
     def segments(self, x, y, z):
@@ -168,9 +189,13 @@ class VoxelWorld:
             if not (0 <= x < config.WORLD_SIZE and 0 <= z < config.WORLD_SIZE
                     and config.MIN_BLOCK_Y <= y < config.MAX_BLOCK_Y):
                 continue
+            saved_states = {}
             if isinstance(value, dict):
                 lower = value.get('b')
                 upper = value.get('t')
+                raw_states = value.get('s')   # version 3 起带状态，旧存档没有
+                if isinstance(raw_states, dict):
+                    saved_states = raw_states
             elif value is None:
                 lower = upper = None
             else:                      # 旧格式：只有下层
@@ -178,12 +203,15 @@ class VoxelWorld:
             for block_id in (lower, upper):
                 if block_id is not None and block_id not in BLOCKS:
                     lower = upper = None
+                    saved_states = {}
                     break
             self.remove_block(x, y, z)
             if lower is not None:
-                self.add_block(x, y, z, lower, layer=0)
+                self.add_block(x, y, z, lower, layer=0,
+                               states=saved_states.get('0'))
             if upper is not None and is_slab(upper):
-                self.add_block(x, y, z, upper, layer=1)
+                self.add_block(x, y, z, upper, layer=1,
+                               states=saved_states.get('1'))
             self.record_edit(x, y, z)
 
     # ---------- 网格 ----------
@@ -228,17 +256,25 @@ class VoxelWorld:
             checker = 1.0 if (x + z) % 2 == 0 else 0.94   # 棋盘微调，方便看出 1 米格
 
             for (y0, y1, block_id) in segments:
-                uv_set = self.materials.uvs.get(block_id,
-                                                self.materials.uvs[DEFAULT_BLOCK_ID])
+                layer = 0 if abs(y0 - y) < 1e-6 else 1
+                state_key = variant_key(
+                    block_id, self.world_states.get((x, y, z, layer)))
+                uv_set = (self.materials.uvs.get(state_key)
+                          or self.materials.uvs.get(block_id)
+                          or self.materials.uvs[DEFAULT_BLOCK_ID])
 
-                def add_face(corners, shade, face_key, v_range=None):
+                def add_face(corners, shade, face_key, v_frac=None):
                     start = len(vertices)
                     factor = shade * checker
-                    u0, v0, u1, v1 = uv_set[face_key]
-                    if v_range is not None:
-                        # 竖直方向裁剪（半砖取贴图下半、整块上半段取上半），
-                        # 而不是把整张贴图压扁
-                        v0, v1 = v_range
+                    u0, v0, u1, v1 = uv_set.get(face_key) or uv_set['side']
+                    if v_frac is not None:
+                        # 按段在格内的高度比例裁剪贴图（半砖取下半、上下
+                        # 半砖各取一半），而不是把整张贴图压扁。用比例而非
+                        # 绝对 v，方向面换了贴图行也不会采样错位。
+                        a, b = v_frac
+                        full0, full1 = v0, v1
+                        v0 = full0 + (full1 - full0) * a
+                        v1 = full0 + (full1 - full0) * b
                     face_uv = ((u0, v0), (u0, v1), (u1, v1), (u1, v0))
                     for (vx, vy, vz), (uu, vv) in zip(corners, face_uv):
                         vertices.append((vx, vy, vz))
@@ -258,9 +294,9 @@ class VoxelWorld:
                               (x + 1, y0, z), (x, y0, z)), 0.45, 'bottom')
 
                 # 侧面：按 0.5 细分，邻居完全遮住的段不画
-                side_u0, side_v0, side_u1, side_v1 = uv_set['side']
-                side_dv = side_v1 - side_v0
                 for (dx, dz, shade) in SIDE_DIRECTIONS:
+                    direction = ('+x' if dx == 1 else '-x' if dx == -1
+                                 else '+z' if dz == 1 else '-z')
                     low = y0
                     while low < y1 - 1e-6:
                         high = min(low + HALF, y1)
@@ -277,11 +313,8 @@ class VoxelWorld:
                             else:
                                 corners = ((x + 1, low, z), (x + 1, high, z),
                                            (x, high, z), (x, low, z))
-                            # 贴图按整格高度裁剪：段占格内 [a, b] → 取对应纵向区间
-                            v_low = side_v0 + side_dv * (low - y)
-                            v_high = side_v0 + side_dv * (high - y)
-                            add_face(corners, shade, 'side',
-                                     v_range=(v_low, v_high))
+                            add_face(corners, shade, direction,
+                                     v_frac=(low - y, high - y))
                         low = high
 
         return Mesh(vertices=vertices, triangles=triangles, colors=colors, uvs=uvs,

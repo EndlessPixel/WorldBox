@@ -28,6 +28,9 @@ CHAT_LINE_STEP = .042    # 每条消息的行距
 CHAT_MAX_LINES = 8       # 最多保留几条
 CHAT_LIFE = 10.0         # 消息存活秒数（最后 1.5 秒淡出）
 CHAT_MAX_INPUT = 100     # 输入长度上限
+# 背包布局（MC 风格：9×3 主背包 + 下方一排 9 格快捷栏）
+INVENTORY_TOP_Y = .18       # 主背包第一行中心 y
+INVENTORY_HOTBAR_Y = -.18   # 背包内快捷栏中心 y
 
 
 class TextInput:
@@ -164,13 +167,12 @@ class GameUI:
         self.debug_open = False
         self.on_rename_player = lambda name: None
 
-        # 快捷栏：玩家可改动；创造背包：固定展示全部方块，只读
+        # 快捷栏：玩家可改动；创造背包：全部方块的无限来源
         self.hotbar = [BLOCK_IDS[i] if i < len(BLOCK_IDS) else None
                        for i in range(config.HOTBAR_SLOTS)]
         self.inventory = list(BLOCK_IDS)
         self.inv_page = 0
         self.selected_slot = 0
-        self.inv_selected = 0
         self.load_hotbar(save_data)
 
         self._build_hud()
@@ -322,36 +324,48 @@ class GameUI:
         self.inventory_root = Entity(parent=camera.ui, enabled=False)
         Entity(parent=self.inventory_root, model='quad', color=color.black66,
                scale=(3, 2), z=-10)
-        self.inventory_title = Text(parent=self.inventory_root, text=i18n.t('inventory.title'),
-                                    origin=(0, 0), y=.34, scale=1.5, z=UI_FRONT_Z)
-        self.inventory_hint = Text(parent=self.inventory_root, text=i18n.t('inventory.hint'),
-                                   origin=(0, 0), y=-.35, scale=.6,
+        self.inventory_title = Text(parent=self.inventory_root,
+                                    text=i18n.t('inventory.title'),
+                                    origin=(0, 0), y=.34, scale=1.4,
+                                    z=UI_FRONT_Z)
+        self.inventory_hint = Text(parent=self.inventory_root,
+                                   text=i18n.t('inventory.hint'),
+                                   origin=(0, 0), y=-.36, scale=.55,
                                    color=color.gray, z=UI_FRONT_Z)
 
-        self.inventory_ui = []
         step = config.SLOT_SIZE + config.SLOT_GAP
+        self.inventory_ui = []
         for row in range(config.INVENTORY_ROWS):
             for col in range(config.INVENTORY_COLS):
                 x = (col - (config.INVENTORY_COLS - 1) / 2) * step
-                y = .12 - row * step
+                y = INVENTORY_TOP_Y - row * step
                 bg = Entity(parent=self.inventory_root, model='quad',
-                            color=color.black90, scale=(config.SLOT_SIZE, config.SLOT_SIZE),
+                            color=color.black90,
+                            scale=(config.SLOT_SIZE, config.SLOT_SIZE),
                             x=x, y=y, z=-1)
-                items = self._make_slot_items(bg)
-                self.inventory_ui.append((bg, items))
+                self.inventory_ui.append((bg, self._make_slot_items(bg)))
 
-        # 翻页控件
+        # MC 风格：主背包下方再放一排 9 格快捷栏，直接映射 hotbar 数据
+        self.inventory_hotbar_ui = []
+        for i in range(config.HOTBAR_SLOTS):
+            x = (i - (config.HOTBAR_SLOTS - 1) / 2) * step
+            bg = Entity(parent=self.inventory_root, model='quad',
+                        color=color.black66,
+                        scale=(config.SLOT_SIZE, config.SLOT_SIZE),
+                        x=x, y=INVENTORY_HOTBAR_Y, z=-1)
+            self.inventory_hotbar_ui.append((bg, self._make_slot_items(bg)))
+
         self.inv_page_text = Text(parent=self.inventory_root, text='',
-                                  origin=(0, 0), y=-.30, scale=.62,
+                                  origin=(0, 0), y=-.29, scale=.6,
                                   color=color.gray, z=UI_FRONT_Z)
         self.inv_prev_button = Button(
             parent=self.inventory_root, text=i18n.t('inventory.prev'),
             scale=(.22, .055), color=BUTTON_COLOR,
-            x=-.42, y=-.38, on_click=lambda: self.turn_inventory_page(-1))
+            x=-.42, y=-.43, on_click=lambda: self.turn_inventory_page(-1))
         self.inv_next_button = Button(
             parent=self.inventory_root, text=i18n.t('inventory.next'),
             scale=(.22, .055), color=BUTTON_COLOR,
-            x=.42, y=-.38, on_click=lambda: self.turn_inventory_page(1))
+            x=.42, y=-.43, on_click=lambda: self.turn_inventory_page(1))
 
         self.held_icons = self._make_held_icons()
 
@@ -867,7 +881,8 @@ class GameUI:
     def apply_materials(self, materials):
         """资源包切换后：重建快捷栏/背包/手持图标并刷新显示。"""
         self.materials = materials
-        for slots in (self.hotbar_ui, self.inventory_ui):
+        for slots in (self.hotbar_ui, self.inventory_ui,
+                      self.inventory_hotbar_ui):
             for bg, items in slots:
                 for icon in items.values():
                     destroy(icon)
@@ -884,15 +899,17 @@ class GameUI:
         return color.rgba(r / 255, g / 255, b / 255, 1)
 
     def refresh_hotbar(self):
-        for i, (bg, items) in enumerate(self.hotbar_ui):
-            block_id = self.hotbar[i]
-            for item_id, icon in items.items():
-                icon.enabled = (item_id == block_id)
-            bg.color = (color.rgba(1, 1, 1, .35) if i == self.selected_slot
-                        else color.black66)
+        """HUD 快捷栏与背包内快捷栏共用同一份 hotbar 数据。"""
+        for slots in (self.hotbar_ui, self.inventory_hotbar_ui):
+            for i, (bg, items) in enumerate(slots):
+                block_id = self.hotbar[i]
+                for item_id, icon in items.items():
+                    icon.enabled = (item_id == block_id)
+                bg.color = (color.rgba(1, 1, 1, .35) if i == self.selected_slot
+                            else color.black66)
 
     def inventory_page_items(self):
-        """当前页显示的方块（创造背包只读，内容固定）。"""
+        """当前页显示的方块（创造背包是无限来源，内容固定）。"""
         start = self.inv_page * config.INVENTORY_PAGE_SIZE
         return self.inventory[start:start + config.INVENTORY_PAGE_SIZE]
 
@@ -901,21 +918,25 @@ class GameUI:
         return total
 
     def turn_inventory_page(self, delta):
-        """翻页：← → 或点击按钮。"""
+        """翻页：PageUp/PageDown 或点击按钮。"""
         self.inv_page = (self.inv_page + delta) % self.inventory_page_count()
-        self.inv_selected = 0
         self.refresh_inventory()
 
     def refresh_inventory(self):
         page = self.inventory_page_items()
-        for i, (bg, items) in enumerate(self.inventory_ui):
+        for i, (_bg, items) in enumerate(self.inventory_ui):
             block_id = page[i] if i < len(page) else None
             for item_id, icon in items.items():
                 icon.enabled = (item_id == block_id)
-            bg.color = (color.rgba(1, 1, 1, .35) if i == self.inv_selected
-                        else color.black90)
-        self.inv_page_text.text = i18n.t('inventory.page').format(
-            page=self.inv_page + 1, total=self.inventory_page_count())
+        # 方块数不超过一页时隐藏翻页控件（当前 24 种 < 27 格）
+        pages = self.inventory_page_count()
+        multi = pages > 1
+        self.inv_page_text.enabled = multi
+        self.inv_prev_button.enabled = multi
+        self.inv_next_button.enabled = multi
+        if multi:
+            self.inv_page_text.text = i18n.t('inventory.page').format(
+                page=self.inv_page + 1, total=pages)
 
     def refresh_menu_highlight(self):
         for i, button in enumerate(self.menu_buttons):
@@ -1205,10 +1226,11 @@ class GameUI:
             return None
         px, py = point
         inv_idx = self.slot_index_at(px, py, config.INVENTORY_COLS,
-                                     config.INVENTORY_ROWS, .12)
+                                     config.INVENTORY_ROWS, INVENTORY_TOP_Y)
         if inv_idx is not None:
             return ('inventory', inv_idx)
-        hot_idx = self.slot_index_at(px, py, config.HOTBAR_SLOTS, 1, -.44)
+        hot_idx = self.slot_index_at(px, py, config.HOTBAR_SLOTS, 1,
+                                     INVENTORY_HOTBAR_Y)
         if hot_idx is not None:
             return ('hotbar', hot_idx)
         return None
@@ -1351,10 +1373,10 @@ class GameUI:
         return True
 
     def inventory_click(self, point, left_click, right_click=False):
-        """背包：翻页按钮优先，其余交给格子拖拽逻辑。"""
+        """背包：翻页按钮优先，其余交给 MC 式格子交互。"""
         if left_click:
             for button in (self.inv_prev_button, self.inv_next_button):
-                if self._hit_button(point, button):
+                if button.enabled and self._hit_button(point, button):
                     button.on_click()
                     return True
         self.handle_inventory_click(point, left_click, right_click)
@@ -1396,6 +1418,29 @@ class GameUI:
                  min(.5 - .01, point[1] - .032))
         self.tooltip_root.position = (px, py, -20)
         self.tooltip_root.enabled = True
+
+    def _move_held_icon(self, point):
+        """手上的方块跟随鼠标。"""
+        for block_id, icon in self.held_icons.items():
+            icon.enabled = (block_id == self.held_item and point is not None)
+            if icon.enabled:
+                icon.position = (point[0], point[1], -18)
+
+    def update_inventory_cursor(self, point):
+        """每帧刷新：手持图标、格子悬停高亮、物品提示。"""
+        self._move_held_icon(point)
+        hover = self.hovered_slot(point)
+        for i, (bg, _items) in enumerate(self.inventory_ui):
+            bg.color = (color.rgba(1, 1, 1, .30)
+                        if hover == ('inventory', i) else color.black90)
+        for i, (bg, _items) in enumerate(self.inventory_hotbar_ui):
+            if i == self.selected_slot:
+                bg.color = color.rgba(1, 1, 1, .38)
+            elif hover == ('hotbar', i):
+                bg.color = color.rgba(1, 1, 1, .22)
+            else:
+                bg.color = color.black66
+        self.update_tooltip(point)
 
     def hide_tooltip(self):
         self.tooltip_root.enabled = False
@@ -1468,14 +1513,22 @@ class GameUI:
         mouse.locked = False
 
     def close_settings(self):
+        # 幂等：物理轮询与 Ursina 事件层可能同时触发，或用户快速点了两下。
+        # 重复调用时若没有这层保护，第二次会误判成"从暂停菜单进来"而弹出菜单。
+        if not self.settings_open:
+            return
         self.settings_open = False
         self.settings_root.enabled = False
-        if self.settings_from_title:
-            # 从主页面打开的设置：返回主页面
-            self.settings_from_title = False
+        # 不依赖单一标志：暂停菜单没开，就说明设置页是从主页面进来的。
+        # 即使 settings_from_title 被意外重置，也不会把暂停菜单弹到主页面上。
+        from_title = self.settings_from_title or not self.menu_state['open']
+        self.settings_from_title = False
+        if from_title:
+            self.menu_root.enabled = False
             self.title_root.enabled = True
             self.refresh_title()
         else:
+            self.title_root.enabled = False
             self.menu_root.enabled = True
             self.refresh_menu_highlight()
         mouse.locked = False
@@ -1529,42 +1582,42 @@ class GameUI:
         if self.on_quit_to_title:
             self.on_quit_to_title()
 
-    # ---------- 背包鼠标拖拽 / 替换 ----------
+    # ---------- 背包鼠标交互（类 MC 创造模式） ----------
     def handle_inventory_click(self, point, left_click, right_click=False):
-        slot = self.hovered_slot(point)
-        if slot and (left_click or right_click):
-            which, idx = slot
-            if which == 'inventory':
-                # 创造背包是只读的：只允许选中查看，不能拿取/替换
-                self.inv_selected = idx
-                self.refresh_inventory()
-            else:
-                item = self.hotbar[idx]
-                if left_click:
-                    if self.held_item is None:
-                        if item is not None:
-                            self.held_item = item
-                            self.held_from = idx
-                            self.hotbar[idx] = None
-                    else:
-                        self.hotbar[idx] = self.held_item
-                        self.held_item = item
-                        self.held_from = idx if item is not None else None
-                    self.selected_slot = idx
-                else:
-                    # 右键：空手时复制该格物品；手上有物品时替换该格（手上保留）
-                    if self.held_item is None:
-                        if item is not None:
-                            self.held_item = item
-                            self.held_from = idx
-                    else:
-                        self.hotbar[idx] = self.held_item
-                        self.held_from = idx
-                    self.selected_slot = idx
-                self.refresh_hotbar()
+        """左键：背包格拿起 / 快捷栏格放下或交换；右键：清空快捷栏格。
 
-        # 手上的方块跟随鼠标
-        for block_id, icon in self.held_icons.items():
-            icon.enabled = (block_id == self.held_item and point is not None)
-            if icon.enabled:
-                icon.position = (point[0], point[1], -18)
+        创造背包是无限来源，从背包拿起的方块关闭界面时直接丢弃；
+        只有从快捷栏拿起的才会在关闭时放回原格。
+        """
+        if not (left_click or right_click):
+            return
+        slot = self.hovered_slot(point)
+        if slot is None:
+            return
+        which, idx = slot
+        if which == 'inventory':
+            if not left_click:
+                return
+            items = self.inventory_page_items()
+            if idx >= len(items):
+                return
+            self.held_item = items[idx]
+            self.held_from = None
+        else:
+            if idx >= len(self.hotbar):
+                return
+            self.selected_slot = idx
+            if right_click:
+                self.hotbar[idx] = None
+            elif self.held_item is None:
+                # 空手左键：拿起这一格
+                if self.hotbar[idx] is not None:
+                    self.held_item = self.hotbar[idx]
+                    self.held_from = idx
+                    self.hotbar[idx] = None
+            else:
+                # 手上有方块：放下，并把原格的方块换到手上
+                self.hotbar[idx], self.held_item = (self.held_item,
+                                                    self.hotbar[idx])
+                self.held_from = idx if self.held_item is not None else None
+            self.refresh_hotbar()
