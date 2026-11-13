@@ -106,9 +106,9 @@ class VoxelWorld:
             changed = self.world_uppers.pop(key, None) is not None
         else:
             changed = self.world_blocks.pop(key, None) is not None
-        if changed:
-            for item in ((0, 1) if layer is None else (layer,)):
-                self.components.remove_pos((x, y, z, item))
+        # 不管是否真挖到方块都清理该位置组件，避免残留运行时数据
+        for item in ((0, 1) if layer is None else (layer,)):
+            self.components.remove_pos((x, y, z, item))
         return changed
 
     def can_place(self, x, y, z, layer, block_id):
