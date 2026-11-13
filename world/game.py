@@ -145,11 +145,10 @@ class Game:
         application.quit()
 
     # ---------- 主页面/存档页输入 ----------
-    def _update_menus(self, just_pressed, left_click, point):
-        """非游戏状态下的页面导航（设置/主页面/存档/创建玩家）。"""
+    def _update_menus(self, just_pressed):
+        """非游戏状态下的键盘导航（可选）；鼠标点击统一由 _dispatch_click 处理。"""
         ui = self.ui
         if ui.settings_open:
-            # 设置页：与暂停菜单一致的导航
             if 'up' in just_pressed:
                 ui.settings_index = (ui.settings_index - 1) % len(ui.settings_rows)
                 ui.refresh_settings()
@@ -175,8 +174,6 @@ class Game:
                 ui.title_activate()
             if 'escape' in just_pressed:
                 ui.title_quit()
-            if left_click:
-                ui.title_click(point)
             return
         if ui.screen == 'saves':
             if 'up' in just_pressed:
@@ -191,17 +188,63 @@ class Game:
                 ui.saves_delete()
             if 'escape' in just_pressed:
                 ui.saves_back()
-            if left_click:
-                ui.saves_click(point)
             return
-        if ui.screen == 'new_save':
-            if left_click:
-                ui.new_save_click(point)
+        if ui.screen in ('new_save', 'player'):
             return
-        if ui.screen == 'player':
+
+    # ---------- 统一鼠标分发 ----------
+    def _dispatch_click(self, point, left_click, right_click):
+        """所有 UI 页面走同一套物理鼠标命中；返回是否吞掉这次点击。
+
+        吞掉后 Game 会把本帧的鼠标/键盘状态清空，避免点击切页后
+        后续分支又按旧页面处理，或菜单里的点击穿透到世界挖掘逻辑。
+        """
+        ui = self.ui
+        if self.state != 'playing':
+            if ui.settings_open:
+                if left_click:
+                    ui.settings_click(point)
+            elif ui.screen == 'title':
+                if left_click:
+                    ui.title_click(point)
+            elif ui.screen == 'saves':
+                if left_click:
+                    ui.saves_click(point)
+            elif ui.screen == 'new_save':
+                if left_click:
+                    ui.new_save_click(point)
+            elif ui.screen == 'player':
+                if left_click:
+                    ui.player_click(point)
+            return True
+        if ui.rebind_action:
+            return True                      # 等待按键重绑定，点击不生效
+        if ui.keys_open:
             if left_click:
-                ui.player_click(point)
-            return
+                ui.keybinds_click(point)
+            return True
+        if ui.packs_open:
+            if left_click:
+                ui.packs_click(point)
+            return True
+        if ui.settings_open:
+            if left_click:
+                ui.settings_click(point)
+            return True
+        if ui.menu_state['open']:
+            if left_click:
+                ui.menu_click(point)
+            return True
+        if self.mapview.is_open:
+            if left_click:
+                self.mapview.click(point)
+            return True
+        if ui.inventory_open:
+            ui.inventory_click(point, left_click, right_click)
+            return True
+        if ui.text_input.is_open:
+            return True                      # 聊天输入时点击不挖方块
+        return False
 
     def _show_notice(self, key):
         """UI 回调：显示一次性提示（i18n 键）。"""
@@ -269,8 +312,15 @@ class Game:
                 self._pending_chars += ' '
             elif len(key) == 1 and key.isprintable():
                 self._pending_chars += key
-        if (key == 'left mouse down' and not self.ui.menu_state['open']
-                and not self.ui.inventory_open and not mouse.locked):
+        if (key == 'left mouse down' and self.state == 'playing'
+                and not self.ui.menu_state['open']
+                and not self.ui.inventory_open
+                and not self.ui.settings_open
+                and not self.ui.packs_open
+                and not self.ui.keys_open
+                and not self.ui.text_input.is_open
+                and not self.mapview.is_open
+                and not mouse.locked):
             mouse.locked = True
 
     # ---------- 每帧更新 ----------
@@ -288,17 +338,16 @@ class Game:
                 py_time.sleep(wait)
         self._last_frame_time = py_time.perf_counter()
 
-        # --- 窗口最小化时不要继续锁定/抢占鼠标指针 ---
+        # --- 任何 UI 页面打开或窗口最小化时都释放鼠标，否则锁回游戏 ---
         panda_window = application.base.win if application.base else None
         if panda_window is not None:
             minimized = bool(panda_window.getProperties().getMinimized())
-            if minimized and mouse.locked:
-                mouse.locked = False
-            elif (not minimized and not mouse.locked
-                  and self.state == 'playing'
-                  and not self.ui.menu_state['open']
-                  and not self.ui.inventory_open
-                  and not self.ui.settings_open):
+            map_open = self.mapview is not None and self.mapview.is_open
+            if minimized or self.ui.any_screen_open() or map_open:
+                if mouse.locked:
+                    mouse.locked = False
+            elif (not mouse.locked and not minimized
+                  and self.state == 'playing'):
                 mouse.locked = True
 
         # --- 语言切换后刷新静态文本 ---
@@ -347,6 +396,18 @@ class Game:
         right_click = right_down and not self.prev_right
         self.prev_left, self.prev_middle, self.prev_right = left_down, middle_down, right_down
 
+        # --- 鼠标 UI 坐标：所有页面共用一次 ---
+        point = self.keyboard.pointer_ui_position()
+        if point is None:
+            point = (mouse.x, mouse.y)
+
+        # --- 统一鼠标分发：点击被 UI 消费后，本帧不再处理其它输入 ---
+        clicked = left_click or middle_click or right_click
+        if clicked and self._dispatch_click(point, left_click, right_click):
+            left_click = middle_click = right_click = False
+            keys = set()
+            just_pressed = set()
+
         # --- 聊天框/文本输入：回车提交，Esc 取消，打字时屏蔽游戏按键 ---
         if self.ui.text_input.is_open:
             if 'enter' in just_pressed:
@@ -364,8 +425,8 @@ class Game:
             keys = set()
             just_pressed = set()
         elif (self.state == 'playing' and 'enter' in just_pressed
-              and not self.ui.menu_state['open']
-              and not self.mapview.is_open and not self.ui.inventory_open):
+              and not self.ui.any_screen_open()
+              and not self.mapview.is_open):
             self.ui.open_chat()
             self.keyboard.drain_chars()
             keys = set()
@@ -374,10 +435,7 @@ class Game:
 
         # --- 非游戏状态：主页面/存档/创建玩家/设置 ---
         if self.state != 'playing':
-            point = self.keyboard.pointer_ui_position()
-            if point is None:
-                point = (mouse.x, mouse.y)
-            self._update_menus(just_pressed, left_click, point)
+            self._update_menus(just_pressed)
             return
 
         # --- M 全屏地图 / ESC 逐层返回 ---
@@ -547,17 +605,13 @@ class Game:
                     self.ui.selected_slot = i
                     self.ui.refresh_hotbar()
 
-            # 鼠标拖拽：点背包格拿起/放下，点快捷栏格放入
-            point = self.keyboard.pointer_ui_position()
-            if point is None:
-                point = (mouse.x, mouse.y)
-            self.ui.handle_inventory_click(point, left_click, right_click)
+            # 鼠标点击已由 _dispatch_click 统一处理，这里只刷新悬浮提示
             self.ui.update_tooltip(point)
             keys = set()
             just_pressed = set()
 
         # --- 数字键 / 滚轮切换快捷栏 ---
-        if not self.ui.menu_state['open'] and not self.ui.inventory_open:
+        if not self.ui.any_screen_open():
             for i in range(config.HOTBAR_SLOTS):
                 if str(i + 1) in just_pressed and self.ui.selected_slot != i:
                     self.ui.selected_slot = i

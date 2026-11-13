@@ -4,7 +4,7 @@
 Panda3D 的 16 位索引上限），红点表示玩家位置。
 """
 
-from ursina import Entity, Mesh, Text, camera, color, destroy, window
+from ursina import Button, Entity, Mesh, Text, camera, color, destroy, window
 
 from . import config, i18n
 from .blocks import BLOCKS
@@ -31,6 +31,10 @@ class WorldMap:
                           origin=(0, 0), y=.485, scale=1.2, color=color.white, z=-2)
         self.hint = Text(parent=self.root, text=i18n.t('map.hint'),
                          origin=(0, 0), y=-.485, scale=.6, color=color.white, z=-2)
+        self.close_button = Button(parent=self.root, text=i18n.t('map.close'),
+                                   scale=(.22, .06),
+                                   color=color.rgba(.58, .62, .68, 1),
+                                   x=.68, y=-.40, z=-3, on_click=self.close)
 
     # ---------- 色块网格 ----------
     def _cell_color(self, x, z):
@@ -93,9 +97,20 @@ class WorldMap:
         self.is_open = False
         self.root.enabled = False
 
+    def click(self, point):
+        """物理鼠标轮询命中关闭按钮（不依赖 Ursina 鼠标事件层）。"""
+        if point is None:
+            return
+        px, py = point
+        button = self.close_button
+        if (abs(px - button.x) <= button.scale_x / 2 + .012
+                and abs(py - button.y) <= button.scale_y / 2 + .012):
+            self.close()
+
     def retranslate(self):
         self.title.text = i18n.t('map.title')
         self.hint.text = i18n.t('map.hint')
+        self.close_button.text = i18n.t('map.close')
 
     def destroy(self):
         """退出到主页面时销毁地图实体。"""

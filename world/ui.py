@@ -323,12 +323,14 @@ class GameUI:
         self.inv_page_text = Text(parent=self.inventory_root, text='',
                                   origin=(0, 0), y=-.30, scale=.62,
                                   color=color.gray, z=UI_FRONT_Z)
-        Button(parent=self.inventory_root, text=i18n.t('inventory.prev'),
-               scale=(.22, .055), color=BUTTON_COLOR,
-               x=-.42, y=-.38, on_click=lambda: self.turn_inventory_page(-1))
-        Button(parent=self.inventory_root, text=i18n.t('inventory.next'),
-               scale=(.22, .055), color=BUTTON_COLOR,
-               x=.42, y=-.38, on_click=lambda: self.turn_inventory_page(1))
+        self.inv_prev_button = Button(
+            parent=self.inventory_root, text=i18n.t('inventory.prev'),
+            scale=(.22, .055), color=BUTTON_COLOR,
+            x=-.42, y=-.38, on_click=lambda: self.turn_inventory_page(-1))
+        self.inv_next_button = Button(
+            parent=self.inventory_root, text=i18n.t('inventory.next'),
+            scale=(.22, .055), color=BUTTON_COLOR,
+            x=.42, y=-.38, on_click=lambda: self.turn_inventory_page(1))
 
         self.held_icons = self._make_held_icons()
 
@@ -389,13 +391,15 @@ class GameUI:
             y = .29 - i * row_step
             label = Text(parent=self.settings_root, text=i18n.t(f'settings.{key}'),
                          origin=(-.5, 0), x=-.7, y=y, scale=.75)
-            Button(parent=self.settings_root, text='-', scale=(.055, .055),
-                   x=.26, y=y, on_click=(lambda k=key: self.adjust_setting(k, -1)))
+            minus = Button(parent=self.settings_root, text='-', scale=(.055, .055),
+                           x=.26, y=y,
+                           on_click=(lambda k=key: self.adjust_setting(k, -1)))
             value = Text(parent=self.settings_root, text='', origin=(0, 0),
                          x=.42, y=y, scale=.75)
-            Button(parent=self.settings_root, text='+', scale=(.055, .055),
-                   x=.60, y=y, on_click=(lambda k=key: self.adjust_setting(k, 1)))
-            self.settings_rows.append((key, label, value))
+            plus = Button(parent=self.settings_root, text='+', scale=(.055, .055),
+                          x=.60, y=y,
+                          on_click=(lambda k=key: self.adjust_setting(k, 1)))
+            self.settings_rows.append((key, label, value, minus, plus))
 
         self.settings_hint = Text(parent=self.settings_root, text=i18n.t('settings.hint'),
                                   origin=(0, 0), y=-.3, scale=.5, color=color.gray)
@@ -423,12 +427,16 @@ class GameUI:
                                  y=-.27, scale=.65, color=color.azure)
         self.packs_hint = Text(parent=self.packs_root, text=i18n.t('packs.hint'),
                                origin=(0, 0), y=-.33, scale=.5, color=color.gray)
-        Button(parent=self.packs_root, text=i18n.t('packs.apply'),
-               scale=(.28, .065), color=BUTTON_COLOR, x=-.35, y=-.42,
-               on_click=self.apply_pack_selection)
-        Button(parent=self.packs_root, text=i18n.t('packs.download'),
-               scale=(.28, .065), color=BUTTON_COLOR, x=0, y=-.42,
-               on_click=self.download_selected_pack)
+        self.packs_apply = Button(parent=self.packs_root,
+                                  text=i18n.t('packs.apply'),
+                                  scale=(.28, .065), color=BUTTON_COLOR,
+                                  x=-.35, y=-.42,
+                                  on_click=self.apply_pack_selection)
+        self.packs_download = Button(parent=self.packs_root,
+                                     text=i18n.t('packs.download'),
+                                     scale=(.28, .065), color=BUTTON_COLOR,
+                                     x=0, y=-.42,
+                                     on_click=self.download_selected_pack)
         self.packs_back = Button(parent=self.packs_root, text=i18n.t('packs.back'),
                                  scale=(.28, .065), color=BUTTON_COLOR,
                                  x=.35, y=-.42, on_click=self.close_packs)
@@ -453,12 +461,16 @@ class GameUI:
                                 y=-.27, scale=.65, color=color.azure)
         self.keys_hint = Text(parent=self.keys_root, text=i18n.t('keybinds.hint'),
                               origin=(0, 0), y=-.33, scale=.5, color=color.gray)
-        Button(parent=self.keys_root, text=i18n.t('keybinds.rebind'),
-               scale=(.28, .065), color=BUTTON_COLOR, x=-.35, y=-.42,
-               on_click=self.start_rebind)
-        Button(parent=self.keys_root, text=i18n.t('keybinds.reset'),
-               scale=(.28, .065), color=BUTTON_COLOR, x=0, y=-.42,
-               on_click=self.reset_keybinds)
+        self.keys_rebind = Button(parent=self.keys_root,
+                                  text=i18n.t('keybinds.rebind'),
+                                  scale=(.28, .065), color=BUTTON_COLOR,
+                                  x=-.35, y=-.42,
+                                  on_click=self.start_rebind)
+        self.keys_reset = Button(parent=self.keys_root,
+                                 text=i18n.t('keybinds.reset'),
+                                 scale=(.28, .065), color=BUTTON_COLOR,
+                                 x=0, y=-.42,
+                                 on_click=self.reset_keybinds)
         self.keys_back = Button(parent=self.keys_root, text=i18n.t('keybinds.back'),
                                 scale=(.28, .065), color=BUTTON_COLOR,
                                 x=.35, y=-.42, on_click=self.close_keybinds)
@@ -542,7 +554,7 @@ class GameUI:
         self.new_save_buttons = [
             Button(parent=self.new_save_root, text=i18n.t('newSave.create'),
                    scale=(.28, .06), color=BUTTON_COLOR, x=-.35, y=-.34,
-                   on_click=self.new_save_create),
+                   on_click=self.submit_name_input),
             Button(parent=self.new_save_root, text=i18n.t('newSave.cancel'),
                    scale=(.28, .06), color=BUTTON_COLOR, x=.35, y=-.34,
                    on_click=self.new_save_cancel),
@@ -562,7 +574,7 @@ class GameUI:
         self.player_button = Button(parent=self.player_root,
                                     text=i18n.t('player.confirm'),
                                     scale=(.3, .06), color=BUTTON_COLOR, y=-.28,
-                                    on_click=self.player_confirm)
+                                    on_click=self.submit_name_input)
         self._bring_to_front(self.player_root)
 
     # ---------- 页面切换 ----------
@@ -839,7 +851,7 @@ class GameUI:
                            else f'  {self.menu_labels[i]}  ')
 
     def refresh_settings(self):
-        for i, (key, label, value) in enumerate(self.settings_rows):
+        for i, (key, label, value, _minus, _plus) in enumerate(self.settings_rows):
             label.text = i18n.t(f'settings.{key}')
             value.text = self.setting_display(key)
             highlighted = (i == self.settings_index)
@@ -1021,18 +1033,24 @@ class GameUI:
 
         self.packs_title.text = i18n.t('packs.title')
         self.packs_hint.text = i18n.t('packs.hint')
+        self.packs_apply.text = i18n.t('packs.apply')
+        self.packs_download.text = i18n.t('packs.download')
         self.packs_back.text = i18n.t('packs.back')
         self.packs_status.text = ''
         self.refresh_packs()
 
         self.keys_title.text = i18n.t('keybinds.title')
         self.keys_hint.text = i18n.t('keybinds.hint')
+        self.keys_rebind.text = i18n.t('keybinds.rebind')
+        self.keys_reset.text = i18n.t('keybinds.reset')
         self.keys_back.text = i18n.t('keybinds.back')
         self.keys_status.text = ''
         self.refresh_keybinds()
 
         self.inventory_title.text = i18n.t('inventory.title')
         self.inventory_hint.text = i18n.t('inventory.hint')
+        self.inv_prev_button.text = i18n.t('inventory.prev')
+        self.inv_next_button.text = i18n.t('inventory.next')
 
         self.settings_title.text = i18n.t('settings.title')
         self.settings_hint.text = i18n.t('settings.hint')
@@ -1116,6 +1134,11 @@ class GameUI:
         return None
 
     # ---------- 页面鼠标命中（不依赖 Ursina 鼠标事件层） ----------
+    def any_screen_open(self):
+        """是否有页面占着鼠标（此时不能把指针锁回游戏中心）。"""
+        return (self.menu_state['open'] or self.settings_open
+                or self.packs_open or self.keys_open or self.inventory_open)
+
     @staticmethod
     def _hit_button(point, button):
         """UI 坐标是否落在按钮矩形内。"""
@@ -1158,6 +1181,94 @@ class GameUI:
     def player_click(self, point):
         if self._hit_button(point, self.player_button):
             self.player_button.on_click()
+
+    def submit_name_input(self):
+        """鼠标点创建/确认按钮：等价于在名称输入框里按回车。"""
+        if self.text_input.is_open:
+            self.text_input.submit()
+
+    @staticmethod
+    def _hit_row(point, labels, row_half=.032):
+        """返回鼠标落在哪一行（按行标签的 y 坐标命中）。"""
+        if point is None:
+            return None
+        px, py = point
+        if not (-.75 <= px <= .75):
+            return None
+        for i, label in enumerate(labels):
+            if abs(py - label.y) <= row_half:
+                return i
+        return None
+
+    def menu_click(self, point):
+        """暂停菜单：点按钮直接执行，并同步键盘高亮位置。"""
+        for i, button in enumerate(self.menu_buttons):
+            if self._hit_button(point, button):
+                self.menu_state['index'] = i
+                self.refresh_menu_highlight()
+                button.on_click()
+                return True
+        return False
+
+    def settings_click(self, point):
+        """设置页：点 - + 调整，点行选中，点返回退出。"""
+        if point is None:
+            return False
+        if self._hit_button(point, self.settings_back):
+            self.settings_back.on_click()
+            return True
+        for i, (_key, _label, _value, minus, plus) in enumerate(self.settings_rows):
+            for button in (minus, plus):
+                if self._hit_button(point, button):
+                    if self.settings_index != i:
+                        self.settings_index = i
+                    button.on_click()
+                    return True
+        row = self._hit_row(point, [r[1] for r in self.settings_rows])
+        if row is not None and row != self.settings_index:
+            self.settings_index = row
+            self.refresh_settings()
+        return True
+
+    def packs_click(self, point):
+        """资源包页：点行选中，点底部按钮执行。"""
+        if point is None:
+            return False
+        for button in (self.packs_apply, self.packs_download, self.packs_back):
+            if self._hit_button(point, button):
+                button.on_click()
+                return True
+        row = self._hit_row(point, [label for label, _ in self.packs_rows])
+        if row is not None and row < len(self.pack_options()):
+            if row != self.packs_index:
+                self.packs_index = row
+                self.refresh_packs()
+        return True
+
+    def keybinds_click(self, point):
+        """键位页：点行选中，点底部按钮执行。"""
+        if point is None:
+            return False
+        for button in (self.keys_rebind, self.keys_reset, self.keys_back):
+            if self._hit_button(point, button):
+                button.on_click()
+                return True
+        row = self._hit_row(point, [label for _a, label, _v in self.keys_rows])
+        if row is not None and row < len(keybinds.DEFAULT_BINDINGS):
+            if row != self.keys_index:
+                self.keys_index = row
+                self.refresh_keybinds()
+        return True
+
+    def inventory_click(self, point, left_click, right_click=False):
+        """背包：翻页按钮优先，其余交给格子拖拽逻辑。"""
+        if left_click:
+            for button in (self.inv_prev_button, self.inv_next_button):
+                if self._hit_button(point, button):
+                    button.on_click()
+                    return True
+        self.handle_inventory_click(point, left_click, right_click)
+        return True
 
     @staticmethod
     def item_info(block_id):
