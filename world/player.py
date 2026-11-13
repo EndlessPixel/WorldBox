@@ -63,6 +63,36 @@ class Player:
         head = self.pos.y + self.body_height
         return top > feet + 0.05 and bottom < head - 0.05
 
+    def _try_move(self, new_x, new_z):
+        """尝试一步水平移动；返回 (是否移动, 是否触发了自动跳跃)。
+
+        分轴调用：斜着贴墙走时一个轴被挡仍能沿另一个轴滑动，不会整个卡死。
+        """
+        new_x = max(config.PLAYER_RADIUS,
+                    min(config.WORLD_SIZE - config.PLAYER_RADIUS, new_x))
+        new_z = max(config.PLAYER_RADIUS,
+                    min(config.WORLD_SIZE - config.PLAYER_RADIUS, new_z))
+        blocked_top = self.world.body_overlap_top(
+            new_x, new_z, self.pos.y, self.body_height, config.PLAYER_RADIUS)
+        sneak_blocked = False
+        if self.crouching and self.grounded:
+            next_support = self.world.support_height_at(
+                new_x, new_z, self.pos.y, config.PLAYER_RADIUS)
+            sneak_blocked = next_support < self.pos.y - 0.02
+        if blocked_top is None and not sneak_blocked:
+            self.pos.x, self.pos.z = new_x, new_z
+            return True, False
+        if (self.grounded and not sneak_blocked and blocked_top is not None
+                and config.AUTO_JUMP
+                and blocked_top - self.pos.y <= config.AUTO_JUMP_HEIGHT + 0.01):
+            step = max(0.05, blocked_top - self.pos.y)
+            self.velocity_y = max(
+                3.0, math.sqrt(2 * config.GRAVITY * (step + 0.25)))
+            self.grounded = False
+            self.pos.x, self.pos.z = new_x, new_z
+            return True, True
+        return False, False
+
     def update(self, keys, just_pressed, dt):
         # --- 鼠标视角 ---
         if mouse.locked:
@@ -108,38 +138,15 @@ class Player:
             steps = max(1, math.ceil(max(abs(delta_x), abs(delta_z)) / 0.05))
             step_x, step_z = delta_x / steps, delta_z / steps
             for _ in range(steps):
-                next_x = max(config.PLAYER_RADIUS,
-                             min(config.WORLD_SIZE - config.PLAYER_RADIUS,
-                                 self.pos.x + step_x))
-                next_z = max(config.PLAYER_RADIUS,
-                             min(config.WORLD_SIZE - config.PLAYER_RADIUS,
-                                 self.pos.z + step_z))
-
-                # 阻挡检测：玩家身体竖直区间与 AABB 内方块是否重叠
-                blocked_top = self.world.body_overlap_top(
-                    next_x, next_z, self.pos.y, self.body_height,
-                    config.PLAYER_RADIUS)
-
-                # 潜行（Shift）：脚下 AABB 全部失去支撑时不许迈出去
-                sneak_blocked = False
-                if self.crouching and self.grounded:
-                    next_support = self.world.support_height_at(
-                        next_x, next_z, self.pos.y, config.PLAYER_RADIUS)
-                    sneak_blocked = next_support < self.pos.y - 0.02
-
-                if blocked_top is None and not sneak_blocked:
-                    self.pos.x, self.pos.z = next_x, next_z
-                elif (self.grounded and not sneak_blocked and blocked_top is not None
-                      and config.AUTO_JUMP
-                      and blocked_top - self.pos.y <= config.AUTO_JUMP_HEIGHT + 0.01):
-                    # 按实际台阶高度起跳：半砖跳半格、整块跳一格
-                    step = max(0.05, blocked_top - self.pos.y)
-                    self.velocity_y = max(
-                        3.0,
-                        math.sqrt(2 * config.GRAVITY * (step + 0.25)))
-                    self.grounded = False
-                    self.pos.x, self.pos.z = next_x, next_z
-                else:
+                moved_x = moved_z = False
+                jumped = False
+                if step_x:
+                    moved_x, jumped = self._try_move(self.pos.x + step_x,
+                                                     self.pos.z)
+                if not jumped and step_z:
+                    moved_z, jumped = self._try_move(self.pos.x,
+                                                     self.pos.z + step_z)
+                if jumped or (not moved_x and not moved_z):
                     break
 
         # 世界边界：每帧钳制
