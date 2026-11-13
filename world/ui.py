@@ -5,7 +5,7 @@ import time as py_time
 from ursina import (Button, Entity, Mesh, Text, application, camera, color,
                     destroy, mouse, window)
 
-from . import config, i18n, keybinds, packs, saves
+from . import config, i18n, keybinds, packs, saves, servers
 from .blocks import BLOCK_IDS, BLOCK_NAMES, BLOCKS
 from .storage import _save_number
 
@@ -187,6 +187,8 @@ class GameUI:
         self._build_keybinds()
         self._build_title()
         self._build_saves()
+        self._build_servers()
+        self._build_server_add()
         self._build_new_save()
         self._build_player()
         self.selector = Entity(model='wireframe_cube', color=color.white,
@@ -197,7 +199,11 @@ class GameUI:
         self.saves_index = 0
         self.save_entries = []          # saves.list_saves() 的结果
         self.settings_from_title = False
-        self.screen = 'title'           # 当前页面：title/saves/new_save/player
+        self.screen = 'title'           # 当前页面：title/saves/servers/server_add/new_save/player
+        # 服务器列表状态
+        self.server_index = 0
+        self.server_entries = []        # servers.list_servers() 的结果
+        self.server_add_name = ''       # 添加向导第一步暂存的名称
 
         self.refresh_hotbar()
         self.refresh_inventory()
@@ -528,13 +534,13 @@ class GameUI:
         self.title_player = Text(parent=self.title_root, text='',
                                  origin=(0, 0), y=.185, scale=.8,
                                  color=color.azure, z=UI_FRONT_Z)
-        labels = (i18n.t('title.singleplayer'), i18n.t('title.settings'),
-                  i18n.t('title.quit'))
+        labels = (i18n.t('title.singleplayer'), i18n.t('title.multiplayer'),
+                  i18n.t('title.settings'), i18n.t('title.quit'))
         self.title_buttons = [
             Button(parent=self.title_root, text=label, scale=(.5, .065),
                    color=BUTTON_COLOR, y=.02 - i * .08, on_click=action)
             for i, (label, action) in enumerate(zip(
-                labels, (self.title_play, self.title_settings,
+                labels, (self.title_play, self.show_servers, self.title_settings,
                          self.title_quit)))
         ]
         self.title_hint = Text(parent=self.title_root, text=i18n.t('title.hint'),
@@ -576,6 +582,66 @@ class GameUI:
             for label, x, action in buttons
         ]
         self._bring_to_front(self.saves_root)
+
+    # ---------- 服务器列表（联机功能尚未实现，仅做 UI 与增删持久化） ----------
+    def _build_servers(self):
+        """服务器列表：选择 / 加入（占位）/ 添加 / 删除。"""
+        self.servers_root = Entity(parent=camera.ui, enabled=False)
+        Entity(parent=self.servers_root, model='quad', color=color.rgba(0, 0, 0, .85),
+               scale=(3, 2), z=-10)
+        self.servers_title = Text(parent=self.servers_root, text=i18n.t('servers.title'),
+                                  origin=(0, 0), y=.42, scale=1.6, z=UI_FRONT_Z)
+        self.servers_rows = []
+        for i in range(SAVES_MAX_ROWS):
+            y = .30 - i * .055
+            label = Text(parent=self.servers_root, text='', origin=(-.5, 0),
+                         x=-.72, y=y, scale=.62, z=UI_FRONT_Z)
+            self.servers_rows.append(label)
+        self.servers_empty = Text(parent=self.servers_root,
+                                  text=i18n.t('servers.empty'), origin=(0, 0),
+                                  y=.05, scale=.7, color=color.gray, z=UI_FRONT_Z)
+        self.servers_status = Text(parent=self.servers_root, text='', origin=(0, 0),
+                                   y=-.27, scale=.65, color=color.azure, z=UI_FRONT_Z)
+        self.servers_hint = Text(parent=self.servers_root, text=i18n.t('servers.hint'),
+                                 origin=(0, 0), y=-.33, scale=.5,
+                                 color=color.gray, z=UI_FRONT_Z)
+        buttons = (
+            (i18n.t('servers.join'), -.42, self.servers_join),
+            (i18n.t('servers.add'), -.14, self.servers_add),
+            (i18n.t('servers.delete'), .14, self.servers_delete),
+            (i18n.t('servers.back'), .42, self.servers_back),
+        )
+        self.servers_buttons = [
+            Button(parent=self.servers_root, text=label, scale=(.28, .06),
+                   color=BUTTON_COLOR, x=x, y=-.42, on_click=action)
+            for label, x, action in buttons
+        ]
+        self._bring_to_front(self.servers_root)
+
+    def _build_server_add(self):
+        """添加服务器：两步向导（先名称后地址），复用名称输入框。"""
+        self.server_add_root = Entity(parent=camera.ui, enabled=False)
+        Entity(parent=self.server_add_root, model='quad',
+               color=color.rgba(0, 0, 0, .85), scale=(3, 2), z=-10)
+        self.server_add_title = Text(parent=self.server_add_root,
+                                     text=i18n.t('serveradd.title'),
+                                     origin=(0, 0), y=.30, scale=1.6, z=UI_FRONT_Z)
+        self.server_add_label = Text(parent=self.server_add_root,
+                                     text=i18n.t('serveradd.name'),
+                                     origin=(0, 0), y=.12, scale=.8,
+                                     color=color.gray, z=UI_FRONT_Z)
+        self.server_add_status = Text(parent=self.server_add_root, text='',
+                                      origin=(0, 0), y=-.22, scale=.65,
+                                      color=color.azure, z=UI_FRONT_Z)
+        self.server_add_buttons = [
+            Button(parent=self.server_add_root, text=i18n.t('serveradd.create'),
+                   scale=(.28, .06), color=BUTTON_COLOR, x=-.35, y=-.34,
+                   on_click=self.submit_name_input),
+            Button(parent=self.server_add_root, text=i18n.t('serveradd.cancel'),
+                   scale=(.28, .06), color=BUTTON_COLOR, x=.35, y=-.34,
+                   on_click=self.server_add_cancel),
+        ]
+        self._bring_to_front(self.server_add_root)
 
     # ---------- 创建新世界 ----------
     def _build_new_save(self):
@@ -706,15 +772,16 @@ class GameUI:
         self.settings_root.enabled = True
         mouse.locked = False
 
-    def _open_name_input(self, on_submit, on_cancel, text=''):
-        """打开居中的名称输入框（创建玩家/新存档/改名共用）。"""
+    def _open_name_input(self, on_submit, on_cancel, text='', max_len=None):
+        """打开居中的名称输入框（创建玩家/新存档/改名/添加服务器共用）。"""
         self.text_input.open(prompt='', on_submit=on_submit,
                              on_cancel=on_cancel,
                              position=(0, -.08), width=.8,
-                             max_len=saves.NAME_MAX_LEN, text=text)
+                             max_len=max_len or saves.NAME_MAX_LEN, text=text)
 
     def _hide_screens(self):
-        for root in (self.title_root, self.saves_root, self.new_save_root,
+        for root in (self.title_root, self.saves_root, self.servers_root,
+                     self.server_add_root, self.new_save_root,
                      self.player_root, self.settings_root, self.packs_root,
                      self.keys_root, self.menu_root):
             root.enabled = False
@@ -742,10 +809,12 @@ class GameUI:
     def refresh_title(self):
         self.title_player.text = i18n.t('title.welcome').format(
             name=self.player_name)
+        titles = ["title.singleplayer", "title.multiplayer",
+                  "title.settings", "title.quit"]
         for i, button in enumerate(self.title_buttons):
-            button.text = (f'> {i18n.t(["title.singleplayer", "title.settings", "title.quit"][i])} <'
+            button.text = (f'> {i18n.t(titles[i])} <'
                            if i == self.title_index
-                           else f'  {i18n.t(["title.singleplayer", "title.settings", "title.quit"][i])}  ')
+                           else f'  {i18n.t(titles[i])}  ')
 
     def refresh_saves(self):
         self.save_entries = saves.list_saves()
@@ -773,7 +842,8 @@ class GameUI:
         self.refresh_title()
 
     def title_activate(self):
-        (self.title_play, self.title_settings, self.title_quit)[self.title_index]()
+        (self.title_play, self.show_servers, self.title_settings,
+         self.title_quit)[self.title_index]()
 
     def title_play(self):
         self.show_saves()
@@ -817,6 +887,108 @@ class GameUI:
 
     def saves_back(self):
         self.show_title()
+
+    # ---------- 服务器列表动作（联机功能尚未实现） ----------
+    def show_servers(self):
+        self._hide_screens()
+        self._enter_menu_ui()
+        self.screen = 'servers'
+        self.servers_root.enabled = True
+        self.servers_status.text = ''
+        self.refresh_servers()
+
+    def show_server_add(self):
+        self._hide_screens()
+        self._enter_menu_ui()
+        self.screen = 'server_add'
+        self.server_add_root.enabled = True
+        self.server_add_status.text = ''
+        self.server_add_label.text = i18n.t('serveradd.name')
+        self._open_name_input(self.server_add_name_submit, self.server_add_cancel)
+
+    def refresh_servers(self):
+        self.server_entries = servers.list_servers()
+        if self.server_entries:
+            self.server_index = min(self.server_index,
+                                    len(self.server_entries) - 1)
+        else:
+            self.server_index = 0
+        self.servers_empty.enabled = not self.server_entries
+        for i, label in enumerate(self.servers_rows):
+            if i < len(self.server_entries):
+                entry = self.server_entries[i]
+                label.text = i18n.t('servers.row').format(
+                    name=entry['name'], address=entry['address'])
+                label.enabled = True
+            else:
+                label.text = ''
+                label.enabled = False
+            label.color = color.azure if i == self.server_index else color.white
+
+    def servers_select(self, delta):
+        if not self.server_entries:
+            return
+        self.server_index = (self.server_index + delta) % len(self.server_entries)
+        self.refresh_servers()
+
+    def servers_join(self):
+        """加入游戏：联机功能尚未实现，仅提示。"""
+        if not self.server_entries:
+            return
+        self.servers_status.text = i18n.t('servers.not_implemented')
+
+    def servers_add(self):
+        self.show_server_add()
+
+    def servers_delete(self):
+        if not self.server_entries:
+            return
+        name = self.server_entries[self.server_index]['name']
+        if servers.delete_server(name):
+            self.servers_status.text = i18n.t('servers.deleted')
+            self.server_index = 0
+        else:
+            self.servers_status.text = i18n.t('notice.save_failed')
+        self.refresh_servers()
+
+    def servers_back(self):
+        self.show_title()
+
+    # ---------- 添加服务器向导 ----------
+    def server_add_name_submit(self, name):
+        name = saves.sanitize_name(name)
+        if not name:
+            self.server_add_status.text = i18n.t('serveradd.empty')
+            self.server_add_label.text = i18n.t('serveradd.name')
+            self._open_name_input(self.server_add_name_submit,
+                                  self.server_add_cancel)
+            return
+        self.server_add_name = name
+        self.server_add_label.text = i18n.t('serveradd.address')
+        self.server_add_status.text = ''
+        self._open_name_input(self.server_add_addr_submit,
+                              self.server_add_cancel, max_len=64)
+
+    def server_add_addr_submit(self, address):
+        address = servers.sanitize_address(address)
+        name = getattr(self, 'server_add_name', '')
+        if not address:
+            self.server_add_status.text = i18n.t('serveradd.addr_empty')
+            self.server_add_label.text = i18n.t('serveradd.address')
+            self._open_name_input(self.server_add_addr_submit,
+                                  self.server_add_cancel, max_len=64)
+            return
+        if servers.add_server(name, address):
+            self.show_servers()
+            self.servers_status.text = i18n.t('servers.added')
+        else:
+            self.server_add_status.text = i18n.t('servers.exists')
+            self.server_add_label.text = i18n.t('serveradd.name')
+            self._open_name_input(self.server_add_name_submit,
+                                  self.server_add_cancel)
+
+    def server_add_cancel(self):
+        self.show_servers()
 
     # ---------- 创建新世界 ----------
     def new_save_create(self, name):
@@ -1171,6 +1343,20 @@ class GameUI:
         self.new_save_buttons[1].text = i18n.t('newSave.cancel')
         self.player_button.text = i18n.t('player.confirm')
         self.refresh_title()      # 最后刷新，保留高亮标记
+
+        # 服务器列表 / 添加服务器（联机 UI）
+        self.servers_title.text = i18n.t('servers.title')
+        self.servers_hint.text = i18n.t('servers.hint')
+        self.servers_empty.text = i18n.t('servers.empty')
+        for button, key in zip(self.servers_buttons,
+                               ('servers.join', 'servers.add', 'servers.delete',
+                                'servers.back')):
+            button.text = i18n.t(key)
+        self.server_add_title.text = i18n.t('serveradd.title')
+        self.server_add_buttons[0].text = i18n.t('serveradd.create')
+        self.server_add_buttons[1].text = i18n.t('serveradd.cancel')
+        self.refresh_servers()
+
         self.saves_title.text = i18n.t('saves.title')
         self.saves_hint.text = i18n.t('saves.hint')
         self.saves_empty.text = i18n.t('saves.empty')
@@ -1279,6 +1465,28 @@ class GameUI:
 
     def new_save_click(self, point):
         for button in self.new_save_buttons:
+            if self._hit_button(point, button):
+                button.on_click()
+                return
+
+    def servers_click(self, point):
+        if point is None:
+            return
+        # 行点击：选中该服务器
+        for i in range(min(len(self.server_entries), SAVES_MAX_ROWS)):
+            y = .30 - i * .055
+            if abs(point[1] - y) <= .028 and -.72 <= point[0] <= .72:
+                if self.server_index != i:
+                    self.server_index = i
+                    self.refresh_servers()
+                return
+        for button in self.servers_buttons:
+            if self._hit_button(point, button):
+                button.on_click()
+                return
+
+    def server_add_click(self, point):
+        for button in self.server_add_buttons:
             if self._hit_button(point, button):
                 button.on_click()
                 return

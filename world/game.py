@@ -194,7 +194,21 @@ class Game:
             if 'escape' in just_pressed:
                 ui.saves_back()
             return
-        if ui.screen in ('new_save', 'player'):
+        if ui.screen == 'servers':
+            if 'up' in just_pressed:
+                ui.servers_select(-1)
+            if 'down' in just_pressed:
+                ui.servers_select(1)
+            if 'enter' in just_pressed:
+                ui.servers_join()
+            if 'n' in just_pressed:
+                ui.servers_add()
+            if 'd' in just_pressed:
+                ui.servers_delete()
+            if 'escape' in just_pressed:
+                ui.servers_back()
+            return
+        if ui.screen in ('new_save', 'player', 'server_add'):
             return
 
     # ---------- 统一鼠标分发 ----------
@@ -215,6 +229,12 @@ class Game:
             elif ui.screen == 'saves':
                 if left_click:
                     ui.saves_click(point)
+            elif ui.screen == 'servers':
+                if left_click:
+                    ui.servers_click(point)
+            elif ui.screen == 'server_add':
+                if left_click:
+                    ui.server_add_click(point)
             elif ui.screen == 'new_save':
                 if left_click:
                     ui.new_save_click(point)
