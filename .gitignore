@@ -9,6 +9,7 @@ saves/
 config/setting.json
 config/keys.json
 config/player.json
+config/servers.json
 /setting.json
 /blocks.json
 /cdn-assets.json
