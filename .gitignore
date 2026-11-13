@@ -8,6 +8,7 @@ saves/
 # 本地配置（含旧布局根目录位置；config/blocks.json 是方块表，需要入库）
 config/setting.json
 config/keys.json
+config/player.json
 /setting.json
 /blocks.json
 /cdn-assets.json
