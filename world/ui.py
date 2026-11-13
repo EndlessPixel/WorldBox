@@ -9,6 +9,12 @@ from . import config, i18n, keybinds, packs, saves, servers
 from .blocks import BLOCK_IDS, BLOCK_NAMES, BLOCKS
 from .storage import _save_number
 
+# Ursina 的 Button.on_click 必须是可调用对象（设为 None 会抛 TypeError）；
+# 用它替换按钮的真实 on_click，Ursina 在鼠标按下时只会调用这个空操作，
+# 真正的行为改由 Game._dispatch_click 调用按钮的 _action 来触发（见
+# _detach_ursina_button_clicks）。
+_NOOP = lambda: None
+
 if config.CJK_FONT:
     Text.default_font = config.CJK_FONT
 
@@ -211,12 +217,36 @@ class GameUI:
         self.refresh_packs()
         self.refresh_keybinds()
 
+        # 把所有按钮的真实动作从 on_click 摘到 _action 并清空 on_click。
+        # 本项目 UI 点击统一由 Game._dispatch_click 用自定义命中判定处理，
+        # 不依赖 Ursina 事件层；但 Ursina 的 Mouse 仍会在 'left mouse down' 时对
+        # 悬停按钮再触发一次 on_click（mouse.py），不摘离就会每个按钮被重复执行
+        # 一次——对"删除"这类不可逆操作会点一次删两个。保留碰撞体以维持悬停高亮。
+        self._detach_ursina_button_clicks()
+
     # ---------- 构建 ----------
     @staticmethod
     def _bring_to_front(root):
         """把页面里的文字/按钮（除第一块背景遮罩）放到遮罩前面。"""
         for child in list(root.children)[1:]:
             child.z = UI_FRONT_Z
+
+    def _detach_ursina_button_clicks(self):
+        """把所有 Button 的真实动作挪到 _action 并清空 on_click。
+
+        Ursina 的 Mouse 在 'left mouse down' 时会对"悬停的按钮"再触发一次
+        on_click（见 ursina/mouse.py），若不摘离，每个按钮会被 Ursina 和我们
+        的 Game._dispatch_click 各执行一次，对不可逆操作（如删除）就是点一次
+        删两个。命中判定仍由 _dispatch_click 用 _hit_button（基于 scale）负责，
+        这里只断开 Ursina 的触发；碰撞体保留以维持悬停高亮。
+        """
+        def walk(node):
+            for child in node.children:
+                if isinstance(child, Button) and child.on_click:
+                    child._action = child.on_click
+                    child.on_click = _NOOP
+                walk(child)
+        walk(camera.ui)
 
     def _build_hud(self):
         # 常驻提示：只在有 notice 时显示，居中偏下，不再堆一长串调试信息
@@ -1444,7 +1474,7 @@ class GameUI:
             if self._hit_button(point, button):
                 self.title_index = i
                 self.refresh_title()
-                button.on_click()
+                button._action()
                 return
 
     def saves_click(self, point):
@@ -1460,13 +1490,13 @@ class GameUI:
                 return
         for button in self.saves_buttons:
             if self._hit_button(point, button):
-                button.on_click()
+                button._action()
                 return
 
     def new_save_click(self, point):
         for button in self.new_save_buttons:
             if self._hit_button(point, button):
-                button.on_click()
+                button._action()
                 return
 
     def servers_click(self, point):
@@ -1482,24 +1512,24 @@ class GameUI:
                 return
         for button in self.servers_buttons:
             if self._hit_button(point, button):
-                button.on_click()
+                button._action()
                 return
 
     def server_add_click(self, point):
         for button in self.server_add_buttons:
             if self._hit_button(point, button):
-                button.on_click()
+                button._action()
                 return
 
     def player_click(self, point):
         if self._hit_button(point, self.player_button):
-            self.player_button.on_click()
+            self.player_button._action()
 
     def rename_click(self, point):
         """改名页：确认 / 取消。"""
         for button in (self.player_button, self.player_cancel_button):
             if button.enabled and self._hit_button(point, button):
-                button.on_click()
+                button._action()
                 return True
         return False
 
@@ -1527,7 +1557,7 @@ class GameUI:
             if self._hit_button(point, button):
                 self.menu_state['index'] = i
                 self.refresh_menu_highlight()
-                button.on_click()
+                button._action()
                 return True
         return False
 
@@ -1537,7 +1567,7 @@ class GameUI:
             return False
         for button in (self.settings_rename, self.settings_back):
             if self._hit_button(point, button):
-                button.on_click()
+                button._action()
                 return True
         for i, (_key, _label, _value, minus, plus) in enumerate(self.settings_rows):
             if self._hit_button(point, minus):
@@ -1562,7 +1592,7 @@ class GameUI:
             return False
         for button in (self.packs_apply, self.packs_download, self.packs_back):
             if self._hit_button(point, button):
-                button.on_click()
+                button._action()
                 return True
         row = self._hit_row(point, [label for label, _ in self.packs_rows])
         if row is not None and row < len(self.pack_options()):
@@ -1577,7 +1607,7 @@ class GameUI:
             return False
         for button in (self.keys_rebind, self.keys_reset, self.keys_back):
             if self._hit_button(point, button):
-                button.on_click()
+                button._action()
                 return True
         row = self._hit_row(point, [label for _a, label, _v in self.keys_rows])
         if row is not None and row < len(keybinds.DEFAULT_BINDINGS):
